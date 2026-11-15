@@ -30,8 +30,19 @@
           <h1>ABYSSAL REEF · WHALES & SHARK</h1>
           <p class="kbd-hint">Click scene to lock pointer (or drag to look) · M Mute · H Hide HUD</p>
           <p class="kbd-hint">W A S D Swim · Space / E Ascend · Shift / Q Dive · 1–6 Vistas</p>
-          <p class="touch-hint">按住螢幕前進 · 滑動轉向 · 第二指加速</p>
-          <p class="touch-hint">Hold to swim · slide to steer · 2nd finger = faster · tap = ripple / sand</p>
+          <p class="touch-hint">左下搖桿游動 · 滑動畫面轉視角（或按住畫面單指前進）</p>
+          <p class="touch-hint">右側 ▲上浮 / ▼下潛 / ⚡加速 · 輕點水面波紋 / 海床雕沙</p>
+        </div>
+        <div id="mobile-controls" class="mobile-controls" aria-label="Touch controls">
+          <div id="mobile-joy" class="mobile-joy" role="slider" aria-label="Swim joystick">
+            <div class="mobile-joy-cross"></div>
+            <div id="mobile-joy-knob" class="mobile-joy-knob"></div>
+          </div>
+          <div id="mobile-actions" class="mobile-actions">
+            <button id="btn-boost" class="mobile-btn mobile-btn-boost" type="button" aria-label="Swim faster">⚡<span>加速</span></button>
+            <button id="btn-up" class="mobile-btn" type="button" aria-label="Ascend">▲<span>上浮</span></button>
+            <button id="btn-down" class="mobile-btn" type="button" aria-label="Dive">▼<span>下潛</span></button>
+          </div>
         </div>
         <div class="viewpoint-bar">
           <button class="vp-btn" data-vp="0">1 · Canyon & Whales</button>

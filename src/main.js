@@ -46,9 +46,15 @@ const shadowScene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.25, 650);
 camera.rotation.order = 'YXZ';
 
-const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
+const isCoarsePointer =
+  window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(any-pointer: coarse)').matches;
 const isMobileDevice =
-  isCoarsePointer || (navigator.maxTouchPoints > 0 && Math.min(window.innerWidth, window.innerHeight) <= 920);
+  isCoarsePointer ||
+  'ontouchstart' in window ||
+  (navigator.maxTouchPoints > 0 && Math.min(window.innerWidth, window.innerHeight) <= 1024);
+if (isMobileDevice && document.body) {
+  document.body.classList.add('has-touch');
+}
 
 const SHADOW_RES = isMobileDevice ? 1024 : 2048;
 const shadowCam = new THREE.OrthographicCamera(-68, 68, 68, -68, 2.0, 220.0);
@@ -893,17 +899,30 @@ window.addEventListener('mousemove', (e) => {
 });
 
 // ============================================================================
-// Touch Controls (abyssal-garden feel):
-//   hold one finger   -> swim forward along the view direction
-//   slide the finger  -> the view follows the finger at once; holding it away from
-//                        where it went down keeps turning, like a joystick
-//   second finger     -> swim faster
+// Touch Controls (On-Screen Virtual Joystick + abyssal-garden Scene Gestures):
+//   left joystick     -> swim forward / back / strafe smoothly
+//   right buttons     -> ascend / dive / boost sprint
+//   scene touch (solo)-> hold to swim forward, slide to steer, 2nd finger = sprint
 //   quick tap         -> ripple the surface / sculpt the sand at that spot
 // ============================================================================
 const uiContainerEl = document.getElementById('ui-container');
 const touchReticleEl = document.getElementById('touch-reticle');
 const touchRingEl = touchReticleEl ? touchReticleEl.querySelector('.touch-reticle-ring') : null;
 const touchDotEl = touchReticleEl ? touchReticleEl.querySelector('.touch-reticle-dot') : null;
+
+const mobileJoyEl = document.getElementById('mobile-joy');
+const mobileJoyKnobEl = document.getElementById('mobile-joy-knob');
+const btnBoostEl = document.getElementById('btn-boost');
+const btnUpEl = document.getElementById('btn-up');
+const btnDownEl = document.getElementById('btn-down');
+
+let joyTouchId = null; // numeric Touch.identifier or 'mouse'
+let joyX = 0;
+let joyY = 0;
+let mobileBoost = false;
+let mobileUp = false;
+let mobileDown = false;
+
 let touchId = -1;
 let touchCount = 0;
 let touchX0 = 0;
@@ -913,14 +932,132 @@ let touchY = 0;
 let touchStartTime = 0;
 let touchTravel = 0;
 
+function markTouchUIActive() {
+  if (document.body && !document.body.classList.contains('has-touch')) {
+    document.body.classList.add('has-touch');
+  }
+  if (uiContainerEl) uiContainerEl.classList.add('touch-started');
+}
+
+function updateJoyVisual(px = 0, py = 0, active = false) {
+  if (mobileJoyEl) mobileJoyEl.classList.toggle('active', active);
+  if (mobileJoyKnobEl) {
+    mobileJoyKnobEl.style.transform = `translate3d(${px}px, ${py}px, 0)`;
+  }
+}
+
+function applyJoyClientPos(clientX, clientY) {
+  if (!mobileJoyEl) return;
+  const rect = mobileJoyEl.getBoundingClientRect();
+  const cx = rect.left + rect.width * 0.5;
+  const cy = rect.top + rect.height * 0.5;
+  const maxR = Math.max(24, rect.width * 0.34);
+  const dx = clientX - cx;
+  const dy = clientY - cy;
+  const dist = Math.hypot(dx, dy);
+  const clamped = dist > maxR ? maxR / dist : 1.0;
+  const px = dx * clamped;
+  const py = dy * clamped;
+  joyX = px / maxR;
+  joyY = -py / maxR; // up on screen = +forward
+  flyBlend = null;
+  updateJoyVisual(px, py, true);
+}
+
+if (mobileJoyEl) {
+  const onJoyTouch = (e) => {
+    if (!e.touches) return;
+    e.preventDefault();
+    e.stopPropagation();
+    unlockAudio();
+    markTouchUIActive();
+    let activeTouch = null;
+    if (joyTouchId !== null && typeof joyTouchId === 'number') {
+      for (let i = 0; i < e.touches.length; i++) {
+        if (e.touches[i].identifier === joyTouchId) activeTouch = e.touches[i];
+      }
+    }
+    if (!activeTouch && e.targetTouches.length > 0) {
+      activeTouch = e.targetTouches[0];
+      joyTouchId = activeTouch.identifier;
+    }
+    if (activeTouch) {
+      applyJoyClientPos(activeTouch.clientX, activeTouch.clientY);
+    } else {
+      joyTouchId = null;
+      joyX = 0;
+      joyY = 0;
+      updateJoyVisual(0, 0, false);
+    }
+  };
+  for (const n of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+    mobileJoyEl.addEventListener(n, onJoyTouch, { passive: false });
+  }
+  mobileJoyEl.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') return;
+    e.preventDefault();
+    e.stopPropagation();
+    joyTouchId = 'mouse';
+    mobileJoyEl.setPointerCapture?.(e.pointerId);
+    applyJoyClientPos(e.clientX, e.clientY);
+  });
+  mobileJoyEl.addEventListener('pointermove', (e) => {
+    if (joyTouchId === 'mouse') applyJoyClientPos(e.clientX, e.clientY);
+  });
+  const endJoyMouse = () => {
+    if (joyTouchId === 'mouse') {
+      joyTouchId = null;
+      joyX = 0;
+      joyY = 0;
+      updateJoyVisual(0, 0, false);
+    }
+  };
+  mobileJoyEl.addEventListener('pointerup', endJoyMouse);
+  mobileJoyEl.addEventListener('pointercancel', endJoyMouse);
+}
+
+function bindHoldButton(el, onChange) {
+  if (!el) return;
+  const setPressed = (down) => {
+    el.classList.toggle('active', down);
+    onChange(down);
+  };
+  const onTouch = (e) => {
+    if (!e.touches) return;
+    e.preventDefault();
+    e.stopPropagation();
+    unlockAudio();
+    markTouchUIActive();
+    setPressed(e.targetTouches.length > 0);
+  };
+  for (const n of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+    el.addEventListener(n, onTouch, { passive: false });
+  }
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') return;
+    e.preventDefault();
+    e.stopPropagation();
+    setPressed(true);
+  });
+  for (const n of ['pointerup', 'pointercancel', 'pointerleave']) {
+    el.addEventListener(n, (e) => {
+      if (e.pointerType !== 'touch') setPressed(false);
+    });
+  }
+}
+
+bindHoldButton(btnBoostEl, (v) => { mobileBoost = v; });
+bindHoldButton(btnUpEl, (v) => { mobileUp = v; });
+bindHoldButton(btnDownEl, (v) => { mobileDown = v; });
+
 function updateTouchReticle() {
   if (!touchReticleEl) return;
-  if (touchId < 0) {
+  if (touchId < 0 || joyTouchId !== null) {
     touchReticleEl.classList.remove('active', 'sprint');
     return;
   }
   touchReticleEl.classList.add('active');
-  touchReticleEl.classList.toggle('sprint', touchCount > 1);
+  touchReticleEl.classList.toggle('sprint', touchCount > 1 || mobileBoost);
   if (touchRingEl) {
     touchRingEl.style.transform = `translate3d(${touchX0}px, ${touchY0}px, 0)`;
   }
@@ -937,6 +1074,16 @@ function updateTouchReticle() {
 function resetTouch() {
   touchId = -1;
   touchCount = 0;
+  joyTouchId = null;
+  joyX = 0;
+  joyY = 0;
+  mobileBoost = false;
+  mobileUp = false;
+  mobileDown = false;
+  updateJoyVisual(0, 0, false);
+  btnBoostEl?.classList.remove('active');
+  btnUpEl?.classList.remove('active');
+  btnDownEl?.classList.remove('active');
   updateTouchReticle();
 }
 
@@ -944,15 +1091,17 @@ function handleTouch(e) {
   if (!e.touches) return; // ignore non-TouchEvent synthetic events
   e.preventDefault();
   unlockAudio();
-  touchCount = e.touches.length;
+  markTouchUIActive();
+  const list = e.targetTouches || e.touches;
+  touchCount = list.length;
   let f = null;
   let first = false;
-  for (let i = 0; i < e.touches.length; i++) {
-    if (e.touches[i].identifier === touchId) f = e.touches[i];
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].identifier === touchId) f = list[i];
   }
   if (!f) {
     // Lifting a single short, still touch taps water/sand at that spot
-    if (touchId >= 0 && e.type === 'touchend' && e.touches.length === 0) {
+    if (touchId >= 0 && e.type === 'touchend' && list.length === 0) {
       for (let i = 0; i < e.changedTouches.length; i++) {
         const ct = e.changedTouches[i];
         if (ct.identifier === touchId && performance.now() - touchStartTime < 240 && touchTravel < 14) {
@@ -961,8 +1110,8 @@ function handleTouch(e) {
       }
     }
     touchId = -1;
-    if (e.touches.length) {
-      f = e.touches[0];
+    if (list.length) {
+      f = list[0];
       touchId = f.identifier;
       first = true;
     }
@@ -976,7 +1125,6 @@ function handleTouch(e) {
       touchStartTime = performance.now();
       touchTravel = 0;
       flyBlend = null;
-      if (uiContainerEl) uiContainerEl.classList.add('touch-started');
     } else {
       const s = 2.8 / Math.max(1, Math.min(window.innerWidth, window.innerHeight));
       const dx = x - touchX;
@@ -1050,8 +1198,8 @@ function updateCameraAndUniforms(dt, elapsed) {
     if (keys.has('ArrowUp')) pitch = Math.min(1.42, pitch + dt * 1.15);
     if (keys.has('ArrowDown')) pitch = Math.max(-1.42, pitch - dt * 1.15);
 
-    // Touch joystick: a finger held past a tiny deadzone from its landing point keeps turning
-    if (touchId >= 0) {
+    // Solo-finger touch joystick: a finger held past a tiny deadzone from its landing point keeps turning
+    if (touchId >= 0 && joyTouchId === null) {
       const rawDx = touchX - touchX0;
       const rawDy = touchY - touchY0;
       const dist = Math.hypot(rawDx, rawDy);
@@ -1080,11 +1228,23 @@ function updateCameraAndUniforms(dt, elapsed) {
     if (keys.has('Space') || keys.has('KeyE')) _moveDir.y += 1.0;
     if (keys.has('ShiftLeft') || keys.has('KeyQ')) _moveDir.y -= 1.0;
 
-    if (touchId >= 0) _moveDir.add(_camFwd);
+    const hasJoy = joyTouchId !== null && (Math.abs(joyX) > 0.04 || Math.abs(joyY) > 0.04);
+    if (hasJoy) {
+      _moveDir.addScaledVector(_camFwd, joyY);
+      _moveDir.addScaledVector(_camRight, joyX);
+    } else if (touchId >= 0) {
+      // Solo scene touch (abyssal-garden feel): hold to swim forward along gaze
+      _moveDir.add(_camFwd);
+    }
+    if (mobileUp) _moveDir.y += 1.0;
+    if (mobileDown) _moveDir.y -= 1.0;
 
     if (_moveDir.lengthSq() > 1e-4) _moveDir.normalize();
-    // Touch: one finger glides smoothly forward, a second finger sprints
-    if (touchId >= 0) _moveDir.multiplyScalar(touchCount > 1 ? 2.2 : 0.85);
+    // Touch: scale smoothly by joystick magnitude / 1-finger cruise, and sprint when boosting or 2 fingers
+    const joyMag = hasJoy ? Math.min(1.0, Math.hypot(joyX, joyY)) : 0.85;
+    if (hasJoy || touchId >= 0 || mobileUp || mobileDown) {
+      _moveDir.multiplyScalar(mobileBoost || touchCount > 1 ? 2.2 : joyMag);
+    }
     const swimSpeed = camera.position.y > 0.0 ? 15.0 : 11.5;
     const damp = 1.0 - Math.exp(-6.5 * dt);
     _velocity.lerp(_moveDir.multiplyScalar(swimSpeed), damp);
