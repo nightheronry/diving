@@ -1238,7 +1238,7 @@ function buildMarineSnow(sharedUniforms, count = 6000) {
 // ============================================================================
 // World Ecology Compiler (Corals, Sponges, Kelp Pillars, Seagrass, Set Pieces)
 // ============================================================================
-export function compileWorldEcology(terrain, sharedUniforms) {
+export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false } = {}) {
   rseed(202611);
 
   const group = new THREE.Group();
@@ -1804,7 +1804,7 @@ export function compileWorldEcology(terrain, sharedUniforms) {
     group.add(buildGlints(sharedUniforms, 1400, glintOrigins));
   }
   group.add(buildBubbles(sharedUniforms, terrain));
-  group.add(buildMarineSnow(sharedUniforms, 5200));
+  group.add(buildMarineSnow(sharedUniforms, isMobile ? 2200 : 5200));
 
   flyPts.unshift(
     new THREE.Vector3(0, -37.5, 22),

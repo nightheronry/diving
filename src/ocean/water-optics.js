@@ -417,7 +417,7 @@ const CAUSTIC_PROJECT_DEPTH = 18.0;
 const CHROMATIC_IORS = [1.3315, 1.3335, 1.3365];
 
 export class DifferentialCausticsPass {
-  constructor(renderer, resolution = 512) {
+  constructor(renderer, resolution = 512, grid = CAUSTIC_GRID) {
     this.renderer = renderer;
     this.target = new THREE.WebGLRenderTarget(resolution, resolution, {
       type: THREE.HalfFloatType,
@@ -506,7 +506,7 @@ export class DifferentialCausticsPass {
       `,
     });
 
-    const gridGeo = new THREE.PlaneGeometry(2, 2, CAUSTIC_GRID, CAUSTIC_GRID);
+    const gridGeo = new THREE.PlaneGeometry(2, 2, grid, grid);
     this.mesh = new THREE.InstancedMesh(gridGeo, this.material, 9);
     this.mesh.frustumCulled = false;
     this.scene.add(this.mesh);

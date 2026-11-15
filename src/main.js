@@ -46,7 +46,11 @@ const shadowScene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.25, 650);
 camera.rotation.order = 'YXZ';
 
-const SHADOW_RES = 2048;
+const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
+const isMobileDevice =
+  isCoarsePointer || (navigator.maxTouchPoints > 0 && Math.min(window.innerWidth, window.innerHeight) <= 920);
+
+const SHADOW_RES = isMobileDevice ? 1024 : 2048;
 const shadowCam = new THREE.OrthographicCamera(-68, 68, 68, -68, 2.0, 220.0);
 
 const passCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -60,6 +64,7 @@ passScene.add(passQuad);
 // ============================================================================
 const sharedUniforms = createSharedUniforms();
 sharedUniforms.uSunDir.value.copy(SUN_DIR);
+sharedUniforms.uShadowSize.value = SHADOW_RES;
 sharedUniforms.uDetailTex.value = createDetailTexture(renderer);
 
 const waterCaustics = createWaterCausticSystem(renderer);
@@ -70,7 +75,7 @@ sharedUniforms.uVolTex.value = terrain.volTex;
 sharedUniforms.uZoneMapTex.value = terrain.zoneMapTex;
 
 const deformableSand = new DeformableSandSystem(renderer, sharedUniforms, {
-  resolution: 512,
+  resolution: isMobileDevice ? 256 : 512,
   worldSize: 44.0,
 });
 sharedUniforms.uSandBedTex.value = deformableSand.texture;
@@ -94,7 +99,7 @@ const terrainShadowMesh = new THREE.Mesh(terrain.geometry, terrainShadowMat);
 terrainShadowMesh.frustumCulled = false;
 shadowScene.add(terrainShadowMesh);
 
-const ecology = compileWorldEcology(terrain, sharedUniforms);
+const ecology = compileWorldEcology(terrain, sharedUniforms, { isMobile: isMobileDevice });
 scene.add(ecology.group);
 shadowScene.add(ecology.shadowGroup);
 
@@ -124,7 +129,7 @@ scene.add(backdropMesh);
 // GPU FFT Spectral Ocean Surface — Tuned for a calm, sunny tropical diving day (適合潛水的晴天)
 const patchLengths = [180, 28, 6];
 const oceanSystem = new SpectralOceanSystem(renderer, {
-  resolution: 256,
+  resolution: isMobileDevice ? 128 : 256,
   patchLengths,
   boundaryFactor: 6,
   gravity: 9.81,
@@ -156,7 +161,7 @@ const oceanSystem = new SpectralOceanSystem(renderer, {
 });
 
 const waterHeightfield = new InteractiveWaterHeightfield(renderer, {
-  resolution: 256,
+  resolution: isMobileDevice ? 128 : 256,
   worldSize: 96.0,
   damping: 0.9962,
   waveSpeed: 1.45,
@@ -164,7 +169,11 @@ const waterHeightfield = new InteractiveWaterHeightfield(renderer, {
 sharedUniforms.uRippleTex.value = waterHeightfield.texture;
 sharedUniforms.uRippleSize.value = waterHeightfield.worldSize;
 
-const differentialCaustics = new DifferentialCausticsPass(renderer, 512);
+const differentialCaustics = new DifferentialCausticsPass(
+  renderer,
+  isMobileDevice ? 256 : 512,
+  isMobileDevice ? 96 : 192
+);
 sharedUniforms.uCausticTex.value = differentialCaustics.texture;
 
 const abyssalOceanMat = createAbyssalSurfaceMaterial(sharedUniforms, MEDIUM_GLSL, patchLengths);
@@ -179,7 +188,8 @@ new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}assets/stylized-above
   abyssalOceanMat.uniforms.uFoamTexture.value = tex;
 });
 
-const oceanGeo = new THREE.PlaneGeometry(760, 760, 512, 512);
+const oceanSegs = isMobileDevice ? 200 : 512;
+const oceanGeo = new THREE.PlaneGeometry(760, 760, oceanSegs, oceanSegs);
 oceanGeo.rotateX(-Math.PI * 0.5);
 const oceanMesh = new THREE.Mesh(oceanGeo, abyssalOceanMat);
 oceanMesh.frustumCulled = false;
@@ -391,7 +401,7 @@ const raysMat = new THREE.ShaderMaterial({
       float hg = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosS, 0.05), 1.5);
       float phase = 0.25 + 0.75 * min(hg * 0.28, 1.8);
 
-      const int STEPS = 20;
+      const int STEPS = ${isMobileDevice ? 10 : 20};
       float stepL = (tMax - 0.6) / float(STEPS);
       if (stepL <= 0.001) {
         fragColor = vec4(0.0);
@@ -638,12 +648,15 @@ for (const k of Object.keys(sharedUniforms)) {
 // ============================================================================
 // Resize Handling
 // ============================================================================
+let mobileRenderScale = 1.0;
+
 function handleResize() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2.0);
+  const w = Math.max(1, window.innerWidth);
+  const h = Math.max(1, window.innerHeight);
+  const baseDpr = Math.min(window.devicePixelRatio || 1, isMobileDevice ? 1.25 : 2.0);
+  const dpr = isMobileDevice ? Math.max(0.65, baseDpr * mobileRenderScale) : baseDpr;
   renderer.setPixelRatio(dpr);
-  renderer.setSize(w, h, false);
+  renderer.setSize(w, h, true);
   camera.aspect = w / h;
   // Phones held upright: widen the vertical FOV so the horizontal view isn't a narrow slit
   camera.fov = camera.aspect < 1.0 ? THREE.MathUtils.clamp(62 / Math.sqrt(camera.aspect), 62, 84) : 62;
@@ -651,7 +664,7 @@ function handleResize() {
 
   raysMat.uniforms.uAspect.value = camera.aspect;
   raysMat.uniforms.uTanHalfFov.value = Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
-  createTargets(Math.floor(w * dpr), Math.floor(h * dpr));
+  createTargets(Math.max(2, Math.floor(w * dpr)), Math.max(2, Math.floor(h * dpr)));
 }
 window.addEventListener('resize', handleResize);
 handleResize();
@@ -837,8 +850,13 @@ container.addEventListener('mousedown', (e) => {
   lastMouseX = e.clientX;
   lastMouseY = e.clientY;
   isSculptingSand = triggerWaterDropAtEvent(e, 0.11);
-  // Only request pointer lock when dragging on open water/cliffs, so clicking/dragging on close sand carves trenches in-place (like deformable-sand)!
-  if (!isSculptingSand && document.pointerLockElement !== renderer.domElement && renderer.domElement.requestPointerLock) {
+  // Only request pointer lock on desktop when dragging on open water/cliffs, so clicking/dragging on close sand or mobile preview works in-place
+  if (
+    !isMobileDevice &&
+    !isSculptingSand &&
+    document.pointerLockElement !== renderer.domElement &&
+    renderer.domElement.requestPointerLock
+  ) {
     try {
       const p = renderer.domElement.requestPointerLock();
       if (p && p.catch) p.catch(() => {});
@@ -882,8 +900,10 @@ window.addEventListener('mousemove', (e) => {
 //   second finger     -> swim faster
 //   quick tap         -> ripple the surface / sculpt the sand at that spot
 // ============================================================================
-const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
 const uiContainerEl = document.getElementById('ui-container');
+const touchReticleEl = document.getElementById('touch-reticle');
+const touchRingEl = touchReticleEl ? touchReticleEl.querySelector('.touch-reticle-ring') : null;
+const touchDotEl = touchReticleEl ? touchReticleEl.querySelector('.touch-reticle-dot') : null;
 let touchId = -1;
 let touchCount = 0;
 let touchX0 = 0;
@@ -892,25 +912,32 @@ let touchX = 0;
 let touchY = 0;
 let touchStartTime = 0;
 let touchTravel = 0;
-let touchFullscreenTried = false;
+
+function updateTouchReticle() {
+  if (!touchReticleEl) return;
+  if (touchId < 0) {
+    touchReticleEl.classList.remove('active', 'sprint');
+    return;
+  }
+  touchReticleEl.classList.add('active');
+  touchReticleEl.classList.toggle('sprint', touchCount > 1);
+  if (touchRingEl) {
+    touchRingEl.style.transform = `translate3d(${touchX0}px, ${touchY0}px, 0)`;
+  }
+  if (touchDotEl) {
+    const dx = touchX - touchX0;
+    const dy = touchY - touchY0;
+    const dist = Math.hypot(dx, dy);
+    const cap = 42;
+    const s = dist > cap ? cap / dist : 1.0;
+    touchDotEl.style.transform = `translate3d(${touchX0 + dx * s}px, ${touchY0 + dy * s}px, 0)`;
+  }
+}
 
 function resetTouch() {
   touchId = -1;
   touchCount = 0;
-}
-
-// Phones: go fullscreen and ask for landscape on the first tap (silently ignored where refused, e.g. iOS)
-function tryMobileFullscreen() {
-  if (touchFullscreenTried || !isCoarsePointer) return;
-  touchFullscreenTried = true;
-  const el = document.documentElement;
-  if (document.fullscreenElement || !el.requestFullscreen) return;
-  try {
-    const p = el.requestFullscreen({ navigationUI: 'hide' });
-    if (p && p.then) {
-      p.then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape')).catch(() => {});
-    }
-  } catch (_) {}
+  updateTouchReticle();
 }
 
 function handleTouch(e) {
@@ -924,11 +951,11 @@ function handleTouch(e) {
     if (e.touches[i].identifier === touchId) f = e.touches[i];
   }
   if (!f) {
-    // The tracked finger was lifted: a short, still touch counts as a tap
-    if (touchId >= 0 && e.type === 'touchend') {
+    // Lifting a single short, still touch taps water/sand at that spot
+    if (touchId >= 0 && e.type === 'touchend' && e.touches.length === 0) {
       for (let i = 0; i < e.changedTouches.length; i++) {
         const ct = e.changedTouches[i];
-        if (ct.identifier === touchId && performance.now() - touchStartTime < 260 && touchTravel < 14) {
+        if (ct.identifier === touchId && performance.now() - touchStartTime < 240 && touchTravel < 14) {
           triggerWaterDropAtEvent(ct, 0.11);
         }
       }
@@ -951,7 +978,7 @@ function handleTouch(e) {
       flyBlend = null;
       if (uiContainerEl) uiContainerEl.classList.add('touch-started');
     } else {
-      const s = 2.4 / Math.max(1, Math.min(window.innerWidth, window.innerHeight));
+      const s = 2.8 / Math.max(1, Math.min(window.innerWidth, window.innerHeight));
       const dx = x - touchX;
       const dy = y - touchY;
       yaw -= dx * s;
@@ -961,7 +988,7 @@ function handleTouch(e) {
     touchX = x;
     touchY = y;
   }
-  if (e.type === 'touchend') tryMobileFullscreen();
+  updateTouchReticle();
 }
 
 for (const n of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
@@ -1023,13 +1050,20 @@ function updateCameraAndUniforms(dt, elapsed) {
     if (keys.has('ArrowUp')) pitch = Math.min(1.42, pitch + dt * 1.15);
     if (keys.has('ArrowDown')) pitch = Math.max(-1.42, pitch - dt * 1.15);
 
-    // Touch joystick: a finger held away from where it went down keeps turning
+    // Touch joystick: a finger held past a tiny deadzone from its landing point keeps turning
     if (touchId >= 0) {
-      const tr = 4.0 / Math.max(1, Math.min(window.innerWidth, window.innerHeight));
-      const jx = Math.max(-1, Math.min(1, (touchX - touchX0) * tr));
-      const jy = Math.max(-1, Math.min(1, (touchY - touchY0) * tr));
-      yaw -= jx * 1.5 * dt;
-      pitch = Math.max(-1.42, Math.min(1.42, pitch - jy * dt));
+      const rawDx = touchX - touchX0;
+      const rawDy = touchY - touchY0;
+      const dist = Math.hypot(rawDx, rawDy);
+      const deadzone = 10.0;
+      if (dist > deadzone) {
+        const span = Math.max(44, Math.min(window.innerWidth, window.innerHeight) * 0.18);
+        const norm = Math.min(1.0, (dist - deadzone) / span) / dist;
+        const jx = rawDx * norm;
+        const jy = rawDy * norm;
+        yaw -= jx * 1.65 * dt;
+        pitch = Math.max(-1.42, Math.min(1.42, pitch - jy * 1.15 * dt));
+      }
     }
 
     camera.rotation.set(pitch, yaw, 0, 'YXZ');
@@ -1049,8 +1083,8 @@ function updateCameraAndUniforms(dt, elapsed) {
     if (touchId >= 0) _moveDir.add(_camFwd);
 
     if (_moveDir.lengthSq() > 1e-4) _moveDir.normalize();
-    // Touch: one finger glides at 70% speed, a second finger sprints
-    if (touchId >= 0) _moveDir.multiplyScalar(touchCount > 1 ? 2.3 : 0.7);
+    // Touch: one finger glides smoothly forward, a second finger sprints
+    if (touchId >= 0) _moveDir.multiplyScalar(touchCount > 1 ? 2.2 : 0.85);
     const swimSpeed = camera.position.y > 0.0 ? 15.0 : 11.5;
     const damp = 1.0 - Math.exp(-6.5 * dt);
     _velocity.lerp(_moveDir.multiplyScalar(swimSpeed), damp);
@@ -1146,12 +1180,32 @@ function renderPass(material, target) {
 // ============================================================================
 // Main Frame Loop
 // ============================================================================
+let mobileFrameSum = 0;
+let mobileFrameSamples = 0;
+let mobileScaleSteps = 0;
+
 function animate() {
   requestAnimationFrame(animate);
 
-  const dt = Math.min(_clock.getDelta(), 0.05);
+  const rawDt = _clock.getDelta();
+  const dt = Math.min(rawDt, 0.08);
   const elapsed = _clock.elapsedTime;
   frameCount++;
+
+  if (isMobileDevice && frameCount > 20 && mobileScaleSteps < 2) {
+    mobileFrameSum += rawDt;
+    mobileFrameSamples++;
+    if (mobileFrameSamples >= 45) {
+      const avgDt = mobileFrameSum / mobileFrameSamples;
+      mobileFrameSum = 0;
+      mobileFrameSamples = 0;
+      if (avgDt > 0.038) {
+        mobileScaleSteps++;
+        mobileRenderScale = mobileScaleSteps === 1 ? 0.8 : 0.65;
+        handleResize();
+      }
+    }
+  }
 
   // 1. Step wave spectra, interactive 2D wave heightfield, differential-area chromatic caustics, shark & whale pod
   oceanSystem.update(elapsed, dt);
