@@ -645,6 +645,8 @@ function handleResize() {
   renderer.setPixelRatio(dpr);
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
+  // Phones held upright: widen the vertical FOV so the horizontal view isn't a narrow slit
+  camera.fov = camera.aspect < 1.0 ? THREE.MathUtils.clamp(62 / Math.sqrt(camera.aspect), 62, 84) : 62;
   camera.updateProjectionMatrix();
 
   raysMat.uniforms.uAspect.value = camera.aspect;
@@ -872,6 +874,105 @@ window.addEventListener('mousemove', (e) => {
   }
 });
 
+// ============================================================================
+// Touch Controls (abyssal-garden feel):
+//   hold one finger   -> swim forward along the view direction
+//   slide the finger  -> the view follows the finger at once; holding it away from
+//                        where it went down keeps turning, like a joystick
+//   second finger     -> swim faster
+//   quick tap         -> ripple the surface / sculpt the sand at that spot
+// ============================================================================
+const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
+const uiContainerEl = document.getElementById('ui-container');
+let touchId = -1;
+let touchCount = 0;
+let touchX0 = 0;
+let touchY0 = 0;
+let touchX = 0;
+let touchY = 0;
+let touchStartTime = 0;
+let touchTravel = 0;
+let touchFullscreenTried = false;
+
+function resetTouch() {
+  touchId = -1;
+  touchCount = 0;
+}
+
+// Phones: go fullscreen and ask for landscape on the first tap (silently ignored where refused, e.g. iOS)
+function tryMobileFullscreen() {
+  if (touchFullscreenTried || !isCoarsePointer) return;
+  touchFullscreenTried = true;
+  const el = document.documentElement;
+  if (document.fullscreenElement || !el.requestFullscreen) return;
+  try {
+    const p = el.requestFullscreen({ navigationUI: 'hide' });
+    if (p && p.then) {
+      p.then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape')).catch(() => {});
+    }
+  } catch (_) {}
+}
+
+function handleTouch(e) {
+  if (!e.touches) return; // ignore non-TouchEvent synthetic events
+  e.preventDefault();
+  unlockAudio();
+  touchCount = e.touches.length;
+  let f = null;
+  let first = false;
+  for (let i = 0; i < e.touches.length; i++) {
+    if (e.touches[i].identifier === touchId) f = e.touches[i];
+  }
+  if (!f) {
+    // The tracked finger was lifted: a short, still touch counts as a tap
+    if (touchId >= 0 && e.type === 'touchend') {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const ct = e.changedTouches[i];
+        if (ct.identifier === touchId && performance.now() - touchStartTime < 260 && touchTravel < 14) {
+          triggerWaterDropAtEvent(ct, 0.11);
+        }
+      }
+    }
+    touchId = -1;
+    if (e.touches.length) {
+      f = e.touches[0];
+      touchId = f.identifier;
+      first = true;
+    }
+  }
+  if (f) {
+    const x = f.clientX;
+    const y = f.clientY;
+    if (first) {
+      touchX0 = x;
+      touchY0 = y;
+      touchStartTime = performance.now();
+      touchTravel = 0;
+      flyBlend = null;
+      if (uiContainerEl) uiContainerEl.classList.add('touch-started');
+    } else {
+      const s = 2.4 / Math.max(1, Math.min(window.innerWidth, window.innerHeight));
+      const dx = x - touchX;
+      const dy = y - touchY;
+      yaw -= dx * s;
+      pitch = Math.max(-1.42, Math.min(1.42, pitch - dy * s));
+      touchTravel += Math.abs(dx) + Math.abs(dy);
+    }
+    touchX = x;
+    touchY = y;
+  }
+  if (e.type === 'touchend') tryMobileFullscreen();
+}
+
+for (const n of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+  container.addEventListener(n, handleTouch, { passive: false });
+}
+
+window.addEventListener('blur', () => {
+  resetTouch();
+  keys.clear();
+});
+
 window.addEventListener('keydown', (e) => {
   keys.add(e.code);
   unlockAudio();
@@ -922,6 +1023,15 @@ function updateCameraAndUniforms(dt, elapsed) {
     if (keys.has('ArrowUp')) pitch = Math.min(1.42, pitch + dt * 1.15);
     if (keys.has('ArrowDown')) pitch = Math.max(-1.42, pitch - dt * 1.15);
 
+    // Touch joystick: a finger held away from where it went down keeps turning
+    if (touchId >= 0) {
+      const tr = 4.0 / Math.max(1, Math.min(window.innerWidth, window.innerHeight));
+      const jx = Math.max(-1, Math.min(1, (touchX - touchX0) * tr));
+      const jy = Math.max(-1, Math.min(1, (touchY - touchY0) * tr));
+      yaw -= jx * 1.5 * dt;
+      pitch = Math.max(-1.42, Math.min(1.42, pitch - jy * dt));
+    }
+
     camera.rotation.set(pitch, yaw, 0, 'YXZ');
     camera.updateMatrixWorld();
 
@@ -936,7 +1046,11 @@ function updateCameraAndUniforms(dt, elapsed) {
     if (keys.has('Space') || keys.has('KeyE')) _moveDir.y += 1.0;
     if (keys.has('ShiftLeft') || keys.has('KeyQ')) _moveDir.y -= 1.0;
 
+    if (touchId >= 0) _moveDir.add(_camFwd);
+
     if (_moveDir.lengthSq() > 1e-4) _moveDir.normalize();
+    // Touch: one finger glides at 70% speed, a second finger sprints
+    if (touchId >= 0) _moveDir.multiplyScalar(touchCount > 1 ? 2.3 : 0.7);
     const swimSpeed = camera.position.y > 0.0 ? 15.0 : 11.5;
     const damp = 1.0 - Math.exp(-6.5 * dt);
     _velocity.lerp(_moveDir.multiplyScalar(swimSpeed), damp);

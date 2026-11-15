@@ -189,3 +189,87 @@ body {
   bottom: 18px;
   white-space: nowrap;
 }
+
+/* ---- Touch / Mobile (abyssal-garden style gestures) ---- */
+html,
+body {
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+#app {
+  height: 100dvh;
+}
+
+#canvas-container,
+#canvas-container canvas {
+  touch-action: none;
+}
+
+.touch-hint {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .kbd-hint {
+    display: none;
+  }
+  .touch-hint {
+    display: block;
+  }
+  /* after the first swim the help card fades away, leaving the scene clear */
+  .touch-started #hud-help.instructions {
+    opacity: 0;
+    transition: opacity 1.2s ease 2.5s;
+  }
+}
+
+@media (max-width: 760px), (max-height: 480px) {
+  #hud-help.instructions {
+    top: calc(10px + env(safe-area-inset-top));
+    left: calc(10px + env(safe-area-inset-left));
+    max-width: 48vw;
+    padding: 7px 10px;
+  }
+  #hud-help.instructions h1 {
+    font-size: 11px;
+  }
+  #hud-help.instructions p {
+    font-size: 10px;
+  }
+  .hud-telemetry {
+    top: calc(10px + env(safe-area-inset-top));
+    right: calc(10px + env(safe-area-inset-right));
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 5px;
+  }
+  .hud-badge {
+    font-size: 10px;
+    padding: 4px 8px;
+  }
+  .viewpoint-bar {
+    left: calc(8px + env(safe-area-inset-left));
+    right: calc(8px + env(safe-area-inset-right));
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    transform: none;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+    gap: 6px;
+    padding-bottom: 2px;
+  }
+  .viewpoint-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .vp-btn {
+    flex-shrink: 0;
+    font-size: 11px;
+    padding: 6px 11px;
+  }
+}
