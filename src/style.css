@@ -1,0 +1,191 @@
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #01111c;
+  color: white;
+  font-family: 'Inter', sans-serif;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+}
+
+#canvas-container {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+#ui-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* Let clicks pass through to canvas */
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.crosshair {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+}
+
+.instructions {
+  position: absolute;
+  bottom: 30px;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 10px 20px;
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  text-align: center;
+}
+
+.instructions h1 {
+  margin: 0 0 10px 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.instructions p {
+  margin: 5px 0;
+  font-size: 0.9rem;
+  color: #ccc;
+}
+
+/* ---- Abyssal Telemetry & Vista Bar ---- */
+.hud-telemetry {
+  position: fixed;
+  top: 18px;
+  right: 20px;
+  display: flex;
+  gap: 10px;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.hud-badge {
+  background: rgba(6, 19, 28, 0.56);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(118, 210, 224, 0.22);
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: rgba(226, 245, 248, 0.92);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.hud-label {
+  color: rgba(114, 212, 220, 0.72);
+  margin-right: 6px;
+}
+
+.audio-btn {
+  pointer-events: auto;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.audio-btn:hover {
+  background: rgba(18, 78, 92, 0.78);
+  border-color: rgba(145, 232, 242, 0.75);
+}
+
+.audio-btn.muted {
+  border-color: rgba(235, 125, 125, 0.45);
+  color: rgba(240, 185, 185, 0.88);
+}
+
+.viewpoint-bar {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  pointer-events: auto;
+  z-index: 20;
+}
+
+.vp-btn {
+  background: rgba(6, 19, 28, 0.62);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(118, 210, 224, 0.25);
+  border-radius: 999px;
+  padding: 6px 13px;
+  color: rgba(218, 242, 247, 0.88);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.vp-btn:hover,
+.vp-btn.active {
+  background: rgba(18, 78, 92, 0.78);
+  border-color: rgba(145, 232, 242, 0.75);
+  color: #ffffff;
+}
+
+.hud-hidden .instructions,
+.hud-hidden .viewpoint-bar,
+.hud-hidden .hud-telemetry {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---- Fix HUD Card Position & Single-Row Vista Bar ---- */
+#hud-help.instructions {
+  top: 18px;
+  left: 20px;
+  right: auto;
+  bottom: auto;
+  transform: none;
+  max-width: 360px;
+  padding: 10px 14px;
+  text-align: left;
+  background: rgba(6, 19, 28, 0.56);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(118, 210, 224, 0.22);
+  border-radius: 10px;
+}
+
+#hud-help.instructions h1 {
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  margin: 0 0 4px 0;
+  color: rgba(235, 248, 252, 0.96);
+}
+
+#hud-help.instructions p {
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 2px 0;
+  color: rgba(202, 232, 240, 0.84);
+}
+
+.viewpoint-bar {
+  flex-wrap: nowrap;
+  bottom: 18px;
+  white-space: nowrap;
+}

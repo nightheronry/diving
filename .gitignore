@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Local reference repositories & agent skills (not needed for GitHub Pages build)
+Threejs-Awesome-Graphics-Agent-Skills/
+ref-abyssal-garden/
