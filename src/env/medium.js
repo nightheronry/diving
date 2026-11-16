@@ -43,6 +43,12 @@ export function createSharedUniforms() {
     uWhalePhase: { value: 0 },
     uWhaleWake0: { value: new THREE.Vector4(0, 0, 0, 0) },
     uWhaleWake1: { value: new THREE.Vector4(0, 0, 0, 0) },
+    uSwimmerVel: { value: new THREE.Vector3() },
+    uSharkWake: { value: new THREE.Vector4(0, -100, 0, 0) },
+    uWhaleBody0: { value: new THREE.Vector4(0, -100, 0, 0) },
+    uWhaleBody1: { value: new THREE.Vector4(0, -100, 0, 0) },
+    uFloraWakePos: { value: Array.from({ length: 16 }, () => new THREE.Vector4(0, -100, 0, 99.0)) },
+    uFloraWakeVel: { value: Array.from({ length: 16 }, () => new THREE.Vector4(0, 0, 0, 2.5)) },
     uCausticTex: { value: null },
     uRippleTex: { value: null },
     uRippleCenter: { value: new THREE.Vector2(0, 0) },
@@ -60,6 +66,77 @@ export function createSharedUniforms() {
     uCameraWorldMatrix: { value: new THREE.Matrix4() },
   };
 }
+
+// Shared GLSL3 Real-Time Flora Collision & Underdamped Spring-Wake Physics
+export const FLORA_PHYSICS_GLSL = /* glsl */ `
+uniform vec3 uSwimmerVel;
+uniform vec4 uSharkWake;
+uniform vec4 uWhaleBody0;
+uniform vec4 uWhaleBody1;
+uniform vec4 uFloraWakePos[16];
+uniform vec4 uFloraWakeVel[16];
+
+vec3 evalFloraPhysicsDisp(vec3 wp, vec3 rootPos, float flex) {
+  if (flex < 0.004) return vec3(0.0);
+  vec3 force = vec3(0.0);
+
+  // A. Direct Soft-Body Swimmer Volume Deflection (parts dense kelp & seagrass cleanly even when hovering slowly)
+  vec3 toLeaf = wp - uCamPos;
+  float dCam = length(toLeaf);
+  float swimmerR = 2.45;
+  if (dCam < swimmerR) {
+    float pen = 1.0 - dCam / swimmerR;
+    pen = pen * pen * (3.0 - 2.0 * pen);
+    vec3 pushDir = dCam > 0.04 ? (toLeaf / dCam) : vec3(0.0, 0.0, 1.0);
+    vec3 latDir = normalize(vec3(pushDir.x, pushDir.y * 0.45, pushDir.z) + vec3(1e-4));
+    force += latDir * (pen * 1.55) + uSwimmerVel * (pen * 0.28);
+  }
+
+  // B. Marine Mega-Fauna Body Parting (Patrol Shark + 1:1 Humpback Mother & Calf)
+  vec4 bodies[3];
+  bodies[0] = uSharkWake;
+  bodies[1] = uWhaleBody0;
+  bodies[2] = uWhaleBody1;
+  for (int b = 0; b < 3; b++) {
+    vec4 bd = bodies[b];
+    if (bd.w > 0.1) {
+      vec3 dVec = wp - bd.xyz;
+      float d2 = dot(dVec, dVec);
+      float rMax = bd.w;
+      if (d2 < rMax * rMax) {
+        float d = sqrt(max(d2, 1e-4));
+        float p = 1.0 - d / rMax;
+        force += (dVec / d) * (p * p * 1.95);
+      }
+    }
+  }
+
+  // C. Persistent 16-Node 3D Underdamped Harmonic Spring Wake (elastic snap-back + fluid vortex oscillation)
+  // Impulse response: x(t) = exp(-1.32 * t) * cos(3.57 * t)
+  for (int i = 0; i < 16; i++) {
+    vec4 wpNode = uFloraWakePos[i];
+    float age = wpNode.w;
+    if (age < 4.5) {
+      vec4 wvNode = uFloraWakeVel[i];
+      float rad = max(wvNode.w, 0.5);
+      vec3 delta = wp - wpNode.xyz;
+      float dist2 = dot(delta, delta);
+      if (dist2 < rad * rad * 1.9) {
+        float falloff = exp(-dist2 / (rad * rad * 0.55));
+        float env = exp(-1.32 * age);
+        float osc = cos(3.57 * age);
+        float speedMag = length(wvNode.xyz);
+        vec3 outward = dist2 > 1e-3 ? normalize(delta) : vec3(0.0, 0.0, 1.0);
+        vec3 wakeDir = wvNode.xyz * 0.36 + outward * (0.48 + 0.14 * speedMag);
+        vec3 swirl = vec3(-wvNode.z, 0.0, wvNode.x) * (sin(4.4 * age + rootPos.x * 1.7 + rootPos.z * 1.3) * 0.24);
+        force += (wakeDir * osc + swirl) * (falloff * env * 0.95);
+      }
+    }
+  }
+
+  return force * flex;
+}
+`;
 
 // ============================================================================
 // Shared GLSL ES 3.00 Library used by ALL scene shaders
@@ -101,6 +178,7 @@ uniform float uSwimPhase;
 uniform float uWhalePhase;
 uniform vec4 uWhaleWake0;
 uniform vec4 uWhaleWake1;
+${FLORA_PHYSICS_GLSL}
 
 const vec3 SIG  = vec3(0.030, 0.0120, 0.0092);
 const vec3 KD   = vec3(0.042, 0.0180, 0.0125);

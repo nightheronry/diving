@@ -1106,11 +1106,9 @@ function createLeafMaterial(sharedUniforms, { shadow = false } = {}) {
       float seed = iMeta.y;
       float droop = iMeta.w;
 
-      // Blade local dimensions scaled cleanly across 8 marine flora types + camera proximity fade
+      // Blade local dimensions scaled cleanly across 8 marine flora types
       float h = iPosScale.w;
-      float camD = distance(iPosScale.xyz, uCamPos);
-      float nearFade = smoothstep(1.2, 3.8, camD);
-      float w = (kind < 1.5 ? 0.19 : (kind < 2.5 ? 0.065 : (kind > 6.5 ? 0.09 : 0.13))) * nearFade;
+      float w = kind < 1.5 ? 0.19 : (kind < 2.5 ? 0.065 : (kind > 6.5 ? 0.09 : 0.13));
 
       // Gentle ocean current surge + traveling frond ripple along height
       float ph = seed * 6.2831 + iPosScale.x * 0.14 + iPosScale.z * 0.17;
@@ -1144,8 +1142,32 @@ function createLeafMaterial(sharedUniforms, { shadow = false } = {}) {
         ln.xz = mat2(ct, -st, st, ct) * ln.xz;
       }
 
-      vec3 wp = iPosScale.xyz + qrot(iQuat, lp);
+      vec3 wpRest = iPosScale.xyz + qrot(iQuat, lp);
       vec3 wn = normalize(qrot(iQuat, ln));
+
+      // Real-time swimmer deflection + 3D damped harmonic wake-spring bending (arc-length preserved)
+      vec3 rel = wpRest - iPosScale.xyz;
+      float restLen = length(rel);
+      float flex = pow(t, 1.32) * (0.55 + 0.45 * min(h, 2.6));
+      vec3 disp = evalFloraPhysicsDisp(wpRest, iPosScale.xyz, flex);
+      float dispLen = length(disp);
+      if (dispLen > 0.001) {
+        float maxD = restLen * 0.92 + 0.38;
+        disp *= (maxD / (dispLen + maxD));
+        rel += disp;
+        if (restLen > 0.04 && length(rel) > restLen) {
+          rel = normalize(rel) * restLen;
+        }
+        wn = normalize(wn + disp * 0.48);
+      }
+
+      vec3 wp = iPosScale.xyz + rel;
+      // Keep deflected blades from clipping cleanly across near lens plane
+      float camPostD = distance(wp, uCamPos);
+      if (camPostD < 0.72) {
+        vec3 away = wp - uCamPos;
+        wp = uCamPos + (camPostD > 0.02 ? away / camPostD : vec3(0.0, 0.0, 1.0)) * 0.72;
+      }
 
       // Keep blades cleanly beneath ocean waves
       wp.y = min(wp.y, uWaveHeight - 0.35);
@@ -1880,7 +1902,7 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
       const rad = j === 0 ? 0 : rr(0.55, 1.85);
       tmpPos.set(ax + Math.cos(ang) * rad, ay + 0.6, az + Math.sin(ang) * rad);
       terrain.snap(tmpPos, tmpNorm);
-      if (tmpNorm.y < 0.35 || nearClearing(tmpPos.x, tmpPos.z, 3.5)) continue;
+      if (tmpNorm.y < 0.35 || nearClearing(tmpPos.x, tmpPos.z, 3.5) || Math.abs(terrain.dw(tmpPos.x, tmpPos.y, tmpPos.z)) > 0.35) continue;
 
       const variant = (c + j) % 3;
       const scale = rr(0.75, 1.95);
@@ -1917,7 +1939,7 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
       const rad = j === 0 ? 0 : rr(0.45, 1.65);
       tmpPos.set(ax + Math.cos(ang) * rad, ay + 0.35, az + Math.sin(ang) * rad);
       terrain.snap(tmpPos, tmpNorm);
-      if (tmpNorm.y < 0.08 || nearClearing(tmpPos.x, tmpPos.z, 3.8)) continue;
+      if (tmpNorm.y < 0.08 || nearClearing(tmpPos.x, tmpPos.z, 3.8) || Math.abs(terrain.dw(tmpPos.x, tmpPos.y, tmpPos.z)) > 0.35) continue;
 
       const mz = terrain.magAt(tmpPos.x, tmpPos.z);
       const pz = terrain.zoneP(tmpPos.x, tmpPos.z);
@@ -2017,7 +2039,7 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
       const rad = j === 0 ? 0 : rr(0.35, 1.35);
       tmpPos.set(ax + Math.cos(ang) * rad, ay + 0.4, az + Math.sin(ang) * rad);
       terrain.snap(tmpPos, tmpNorm);
-      if (tmpNorm.y < 0.40 || nearClearing(tmpPos.x, tmpPos.z, 3.0)) continue;
+      if (tmpNorm.y < 0.40 || nearClearing(tmpPos.x, tmpPos.z, 3.0) || Math.abs(terrain.dw(tmpPos.x, tmpPos.y, tmpPos.z)) > 0.35) continue;
 
       const scale = rr(0.85, 1.85);
       buckets.anemone.push({
@@ -2054,16 +2076,15 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
   ];
   for (let i = 0; i < heroAnemones.length; i++) {
     const ha = heroAnemones[i];
-    tmpPos.set(ha.x, -26.0, ha.z);
-    terrain.snap(tmpPos, tmpNorm);
-    if (tmpNorm.y < 0.25) {
-      const hy = terrain.gy(ha.x, ha.z);
-      tmpPos.set(ha.x, hy, ha.z);
-      tmpNorm.copy(terrain.grad(ha.x, hy, ha.z));
-    }
+    const fl = terrain.floorsAt(ha.x, ha.z);
+    // Prefer canyon wall shelf ledge if present, otherwise seabed floor — never snap blindly in mid-water!
+    const chosen = fl[fl.length - 1];
+    tmpPos.set(ha.x, chosen.y, ha.z);
+    tmpNorm.copy(chosen.n);
+    if (Math.abs(terrain.dw(tmpPos.x, tmpPos.y, tmpPos.z)) > 0.45) continue;
     buckets.anemone.push({
       x: tmpPos.x,
-      y: tmpPos.y - 0.04,
+      y: tmpPos.y - 0.08,
       z: tmpPos.z,
       scale: ha.s,
       q: qFromYToNormal(tmpNorm.x * 0.4, Math.max(0.65, tmpNorm.y), tmpNorm.z * 0.4, rr(0, Math.PI * 2)),

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WORLD_BOUNDS, MEDIUM_GLSL } from './medium.js';
+import { WORLD_BOUNDS, MEDIUM_GLSL, FLORA_PHYSICS_GLSL } from './medium.js';
 
 // ============================================================================
 // Seeded PRNG & Procedural Noise (Zero-Allocation Fast Typed Helpers)
@@ -968,7 +968,8 @@ export function bindSharedUniforms(material, sharedUniforms) {
 }
 
 const SOLID_SWAY_GLSL = /* glsl */ `
-  void applyFloraAndAnemoneSway(float kind, vec3 posScale, vec4 meta, float time, inout vec3 lp, inout vec3 ln) {
+  void applyFloraAndAnemoneSway(float kind, vec4 posScale, vec4 quat, vec4 meta, float time, inout vec3 lp, inout vec3 ln) {
+    float physFlex = 0.0;
     // Delicate current sway for gorgonian sea fans (kind == 3)
     if (kind > 2.5 && kind < 3.5) {
       float h = clamp(lp.y * 0.25, 0.0, 1.0);
@@ -976,8 +977,15 @@ const SOLID_SWAY_GLSL = /* glsl */ `
       float swayZ = cos(time * 1.15 + posScale.z * 0.31) * 0.08 * h * h;
       lp.x += swayX;
       lp.z += swayZ;
+      physFlex = h * h * 0.38;
+    } else if (kind > 6.5 && kind < 7.5) {
+      // Twisted Giant Kelp Stipe Columns (kind == 7): gentle ambient surge + full swim-wake & megafauna bending
+      float h = smoothstep(0.05, 0.94, lp.y);
+      lp.x += sin(time * 0.95 + posScale.x * 0.16 + lp.y * 2.4) * 0.025 * h;
+      lp.z += cos(time * 0.85 + posScale.z * 0.18 + lp.y * 2.1) * 0.022 * h;
+      physFlex = h * 0.92;
     } else if (kind > 7.5 && kind < 8.5) {
-      // Sea Anemone (kind == 8): pedal column anchored while crown tentacles sway with waves & writhe organically
+      // Sea Anemone (kind == 8): pedal column anchored while crown tentacles sway with waves & brush physics
       float flex = smoothstep(0.18, 0.95, lp.y);
       float ang = atan(lp.z, lp.x);
       float surgePh = time * 1.45 + posScale.x * 0.22 + posScale.z * 0.19;
@@ -989,12 +997,32 @@ const SOLID_SWAY_GLSL = /* glsl */ `
       lp.z += dz;
       lp.y += dy;
       ln = normalize(ln + vec3(dx * 0.65, 0.15 * flex, dz * 0.65));
+      physFlex = flex * 0.42;
     } else if (kind > 9.5) {
-      // Giant Gorgonian Sea Fan (kind == 10): broad flexible fan undulates gently in cross-wall surge
+      // Giant Gorgonian Sea Fan (kind == 10): broad flexible fan undulates gently in cross-wall surge + vortex flex
       float h = clamp(length(lp.xy) * 0.45, 0.0, 1.0);
       float surge = sin(time * 0.95 + posScale.x * 0.25 + posScale.z * 0.28 + lp.x * 0.7);
       float ripple = cos(time * 1.45 + lp.y * 0.8 + posScale.y * 0.4);
       lp.z += (surge * 0.095 + ripple * 0.032) * h * h;
+      physFlex = h * h * 0.34;
+    }
+
+    if (physFlex > 0.002) {
+      vec3 worldRest = posScale.xyz + qrot(quat, lp * posScale.w);
+      vec3 wDisp = evalFloraPhysicsDisp(worldRest, posScale.xyz, physFlex);
+      float dLen = length(wDisp);
+      if (dLen > 0.001) {
+        float maxD = length(lp * posScale.w) * 0.85 + 0.35;
+        wDisp *= (maxD / (dLen + maxD));
+        vec4 invQ = vec4(-quat.xyz, quat.w);
+        vec3 localDisp = qrot(invQ, wDisp / max(posScale.w, 0.05));
+        float restL = length(lp);
+        lp += localDisp;
+        if (restL > 0.05 && length(lp) > restL) {
+          lp = normalize(lp) * restL;
+        }
+        ln = normalize(ln + localDisp * 0.45);
+      }
     }
   }
 `;
@@ -1072,7 +1100,7 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
 
       ${instanced ? `
       float kind = floor(iMeta.x + 0.5);
-      applyFloraAndAnemoneSway(kind, iPosScale.xyz, iMeta, uTime, lp, ln);
+      applyFloraAndAnemoneSway(kind, iPosScale, iQuat, iMeta, uTime, lp, ln);
       wp = iPosScale.xyz + qrot(iQuat, lp * iPosScale.w);
       wn = normalize(qrot(iQuat, ln));
       vOp = lp * iPosScale.w + iMeta.y * 37.0;
@@ -1402,12 +1430,16 @@ export function createSolidShadowMaterial({ instanced = false, sharedUniforms } 
     out vec4 vMeta;
     ` : ''}
     uniform float uTime;
-
-    ${SOLID_SWAY_GLSL}
+    uniform vec3 uCamPos;
 
     vec3 qrot(vec4 q, vec3 v) {
       return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
     }
+
+    ${instanced ? `
+    ${FLORA_PHYSICS_GLSL}
+    ${SOLID_SWAY_GLSL}
+    ` : ''}
 
     void main() {
       vec3 lp = position;
@@ -1415,7 +1447,7 @@ export function createSolidShadowMaterial({ instanced = false, sharedUniforms } 
       vec3 wp;
       ${instanced ? `
       float kind = floor(iMeta.x + 0.5);
-      applyFloraAndAnemoneSway(kind, iPosScale.xyz, iMeta, uTime, lp, dummyN);
+      applyFloraAndAnemoneSway(kind, iPosScale, iQuat, iMeta, uTime, lp, dummyN);
       wp = iPosScale.xyz + qrot(iQuat, lp * iPosScale.w);
       vLocalPos = lp;
       vAo = aAo;

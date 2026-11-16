@@ -863,6 +863,7 @@ function triggerWaterDropAtEvent(e, strength = 0.095) {
         const hy = ro.y + rd.y * hitT;
         const hz = ro.z + rd.z * hitT;
         deformableSand.addPointerStroke(hx, hy, hz, 0.92, 0.96);
+        depositFloraWake(hx, hy + 0.6, hz, rd.x * 4.8, Math.max(0.8, rd.y * 2.5 + 1.2), rd.z * 4.8, 3.6);
         if (hy < -30.0 && hitT < 28.0) hitSand = true;
         break;
       }
@@ -1199,6 +1200,17 @@ const _moveDir = new THREE.Vector3();
 const _velocity = new THREE.Vector3();
 const _shadowFocus = new THREE.Vector3();
 const _clock = new THREE.Clock();
+const _lastFloraWakePos = new THREE.Vector3(12.5, -18.5, 14.0);
+let _floraWakeCursor = 0;
+let _floraWakeCooldown = 0;
+let _whaleFloraCooldown = 0;
+
+function depositFloraWake(x, y, z, vx, vy, vz, radius = 3.2) {
+  const idx = _floraWakeCursor;
+  _floraWakeCursor = (_floraWakeCursor + 1) & 15;
+  sharedUniforms.uFloraWakePos.value[idx].set(x, y, z, 0.0);
+  sharedUniforms.uFloraWakeVel.value[idx].set(vx, vy, vz, radius);
+}
 
 let frameCount = 0;
 
@@ -1305,6 +1317,63 @@ function updateCameraAndUniforms(dt, elapsed) {
   sharedUniforms.uSandLightTex.value = deformableSand.lightTexture;
   sharedUniforms.uSandCenter.value.copy(deformableSand.center);
   sharedUniforms.uSandPointer.value.copy(deformableSand.pointerRing);
+
+  // Step 3D aquatic flora physics (16-node underdamped wake ring buffer + megafauna bodies)
+  const wakePosArr = sharedUniforms.uFloraWakePos.value;
+  for (let wi = 0; wi < 16; wi++) {
+    if (wakePosArr[wi].w < 10.0) wakePosArr[wi].w += dt;
+  }
+  sharedUniforms.uSwimmerVel.value.copy(_velocity);
+  sharedUniforms.uSharkWake.value.set(
+    sharkRig.controller.pos.x,
+    sharkRig.controller.pos.y,
+    sharkRig.controller.pos.z,
+    3.2
+  );
+  sharedUniforms.uWhaleBody0.value.set(
+    whalePod.controller.mPos.x,
+    whalePod.controller.mPos.y,
+    whalePod.controller.mPos.z,
+    6.2
+  );
+  sharedUniforms.uWhaleBody1.value.set(
+    whalePod.controller.cPos.x,
+    whalePod.controller.cPos.y,
+    whalePod.controller.cPos.z,
+    4.0
+  );
+
+  _floraWakeCooldown -= dt;
+  const swimSpd = _velocity.length();
+  const movedDist = _lastFloraWakePos.distanceTo(camera.position);
+  if (camera.position.y < sharedUniforms.uWaveHeight.value + 0.5 && swimSpd > 0.35 && (movedDist > 1.15 || _floraWakeCooldown <= 0)) {
+    const wakeRad = 2.8 + Math.min(2.6, swimSpd * 0.24);
+    depositFloraWake(
+      camera.position.x + _camFwd.x * 0.35,
+      camera.position.y + _camFwd.y * 0.35,
+      camera.position.z + _camFwd.z * 0.35,
+      _velocity.x * 0.62,
+      _velocity.y * 0.48,
+      _velocity.z * 0.62,
+      wakeRad
+    );
+    _lastFloraWakePos.copy(camera.position);
+    _floraWakeCooldown = 0.14;
+  }
+
+  _whaleFloraCooldown -= dt;
+  if (_whaleFloraCooldown <= 0) {
+    depositFloraWake(
+      whalePod.controller.mFlukePos.x,
+      whalePod.controller.mFlukePos.y,
+      whalePod.controller.mFlukePos.z,
+      -whalePod.controller.fwd.x * 3.8,
+      0.35,
+      -whalePod.controller.fwd.z * 3.8,
+      6.0
+    );
+    _whaleFloraCooldown = 0.28;
+  }
 
   // Sync directional orthographic sun shadow frustum around camera focus
   const texelSize = 136.0 / SHADOW_RES;
