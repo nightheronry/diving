@@ -204,11 +204,11 @@ export const MESAS = [
   { ax: -84, az: -34, bx: -80, bz: -12, r: 10, top: -7, overhang: 6, waist: 2 },
   { ax: -78, az: -6, bx: -83, bz: 12, r: 12, top: -13, overhang: 5, waist: 2 },
   { ax: -82, az: 18, bx: -79, bz: 32, r: 9, top: -8, overhang: 6, waist: 2 },
-  // Grotto overhang cliff, coral rock & far wall
+  // Grotto overhang cliff, coral rock & swim-through Purple Grotto arch ridge (with open lagoon beyond z=94)
   { ax: -17, az: 62, bx: -19, bz: 78, r: 10, top: -6, overhang: 9, waist: 3 },
-  { ax: -21, az: 84, bx: -18, bz: 98, r: 11, top: -9, overhang: 8, waist: 3 },
-  { ax: 22, az: 67, bx: 24, bz: 80, r: 7, top: -11, overhang: 6, waist: 2 },
-  { ax: -16, az: 106, bx: 34, bz: 106, r: 9, top: -27, overhang: 3, waist: 2 },
+  { ax: -21, az: 82, bx: -18, bz: 92, r: 10, top: -9, overhang: 8, waist: 3 },
+  { ax: 22, az: 67, bx: 24, bz: 82, r: 7, top: -11, overhang: 6, waist: 2 },
+  { ax: -18, az: 86, bx: 30, bz: 86, r: 8.5, top: -20, overhang: 3.5, waist: 2 },
 ];
 
 export const ARCHES = [
@@ -219,7 +219,6 @@ export const ARCHES = [
 
 export const HOLES = [
   { ax: 19, ay: -21, az: -23, r: 2.5, bx: 19, by: -21, bz: -7 },
-  { ax: 9, ay: -37, az: 94, r: 4.2, bx: 9, by: -34, bz: 114 },
 ];
 
 export const CLEARS = [
@@ -229,7 +228,8 @@ export const CLEARS = [
   { ax: 72, az: -26, bx: 72, bz: -26, r: 26, soft: 10, x: 72, z: -26, floor: -45.5 },
   { ax: -60, az: -36, bx: -60, bz: 36, r: 13, soft: 8, x: -60, z: 0, floor: -45.5 },
   { ax: -60, az: 42, bx: -18, bz: 46, r: 12, soft: 8, x: -39, z: 44, floor: -45.5 },
-  { ax: 4, az: 58, bx: 8, bz: 100, r: 24, soft: 10, x: 6, z: 79, floor: -45.5 },
+  { ax: 4, az: 58, bx: 8, bz: 102, r: 24, soft: 10, x: 6, z: 80, floor: -45.5 },
+  { ax: -36, az: 98, bx: 42, bz: 95, r: 15, soft: 8, x: 3, z: 97, floor: -45.5 },
   { ax: -34, az: -74, bx: -56, bz: -46, r: 11, soft: 8, x: -45, z: -60, floor: -45.5 },
   { ax: 24, az: 36, bx: 44, bz: 52, r: 11, soft: 8, x: 34, z: 44, floor: -45.5 },
 ];
@@ -374,10 +374,18 @@ export function dens(x, y, z) {
     d = smax(d, a.minorR - ringDist, 1.5);
   }
 
-  // 2-octave 3D Worley cellular cliff fractures + sedimentary strata steps (suppressed on sandy canyon floors)
+  // Carved Purple Grotto wide swim-through cavern arch (craggy walls & flat sandy floor, open out to outer lagoon z=96..108)
+  if (z > 64.0 && z < 110.0 && Math.abs(x - 6.0) < 16.0) {
+    const pgHd = seg3(x + wx * 2.4, y + wy * 1.8, z + wz * 2.4, 6.0, -37.0, 71.0, 6.0, -35.0, 102.0) - 6.8;
+    // Keep sandy bed under tunnel intact while carving wide craggy cavern walls & vaulted roof
+    d = smin(d, smax(pgHd, g0 + 0.6 - y, 1.8), 2.0);
+  }
+
+  // 2-octave 3D Worley cellular cliff fractures + sedimentary strata steps (suppressed on flat sandy floors; active on arches/ceilings)
   if (Math.abs(d) < 7.0) {
     const hg = y - g0;
-    const rk = smoothstep(0.95, 5.2, hg) * (1.0 - clr * 0.92);
+    const archRock = smoothstep(5.5, 11.0, hg) * 0.62;
+    const rk = smoothstep(0.95, 5.2, hg) * Math.max(1.0 - clr * 0.92, archRock);
     const w1 = wor(x * 0.17 + wx * 2.0, y * 0.17 + wy * 2.0, z * 0.17 + wz * 2.0);
     const w2 = wor(x * 0.41 + 7.0, y * 0.41 + 7.0, z * 0.41 + 7.0);
     const fn = fbm(x * 0.3, y * 0.3, z * 0.3, 3) - 0.5;

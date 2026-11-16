@@ -713,7 +713,7 @@ const VIEWPOINTS = [
   { name: 'Abyssal Canyon & Fluke', ...buildLookPose(0.8, 2.2, -11.5, -0.5, -45.2, -6.8) },
   { name: 'Sunken Shipwreck', ...buildLookPose(56.0, -20.5, 27.0, 58.8, -22.5, 6.0, true) },
   { name: 'Sponge Canyon', ...buildLookPose(-55.0, 2.2, -18.0, -60.0, -30.0, 8.0) },
-  { name: 'Purple Grotto', ...buildLookPose(3.0, 2.4, 58.0, 2.0, -28.0, 96.0) },
+  { name: 'Purple Grotto', ...buildLookPose(4.5, -36.8, 62.0, 6.0, -35.8, 94.0, true) },
   { name: 'Sunny Spectral Surface', ...buildLookPose(-14.5, 6.2, 23.0, 0.5, -0.5, -6.0, true) },
   { name: 'Blue Hole God Rays', ...buildLookPose(47.8, -39.2, 71.2, 62.5, -24.5, 62.0, true) },
   { name: 'WWII Fighter Wreck', ...buildLookPose(61.5, fighterWreckY + 4.8, -32.2, 71.0, fighterWreckY + 0.1, -25.0, true) },

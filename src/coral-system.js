@@ -1398,6 +1398,7 @@ function buildBubbles(sharedUniforms, terrain) {
     { x: 30, z: -14, rate: 0.95 },
     { x: 61.5, z: 64.5, rate: 1.05 }, // Rising silver bubbles inside Blue Hole god rays
     { x: 71.0, z: -25.0, rate: 0.92 }, // Bubbles escaping WWII Fighter Plane cockpit
+    { x: 6.0, z: 101.0, rate: 0.95 }, // Bubbles beyond Purple Grotto exit lagoon
   ];
 
   const perVent = 64;
@@ -1817,6 +1818,7 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
     const nz = terrain.wn[vid * 3 + 2];
     if (y < -40.5 && nearClearing(x, z, 8.0)) continue;
     if (Math.hypot(x - 71.0, z + 25.0) < 10.5 && y > -26.0) continue; // Keep Fighter Wreck wing bed clear
+    if (Math.abs(x - 6.0) < 6.0 && z > 70.0 && z < 104.0 && y > -42.0 && y < -28.0) continue; // Keep Purple Grotto swim-through tunnel clear
 
     const k = i % 3;
     const scale = (i < 550 && ny > 0.38) ? rr(0.85, 2.05) : rr(0.32, 0.85);
