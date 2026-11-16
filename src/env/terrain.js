@@ -231,6 +231,7 @@ export const CLEARS = [
   { ax: -60, az: 42, bx: -18, bz: 46, r: 12, soft: 8, x: -39, z: 44, floor: -45.5 },
   { ax: 4, az: 58, bx: 8, bz: 100, r: 24, soft: 10, x: 6, z: 79, floor: -45.5 },
   { ax: -34, az: -74, bx: -56, bz: -46, r: 11, soft: 8, x: -45, z: -60, floor: -45.5 },
+  { ax: 24, az: 36, bx: 44, bz: 52, r: 11, soft: 8, x: 34, z: 44, floor: -45.5 },
 ];
 
 export const PURPLE = { x: 6, z: 84, r: 44 };
@@ -315,6 +316,49 @@ export function dens(x, y, z) {
 
   let d = smax(g0 + 4.5 * smoothstep(10.0, 0.0, de) - y, dm, 3.0);
   d = smax(d, (th - y) * 0.7, 3.0);
+
+  // Fighter Plane Wreck Sunlit Coral Reef Terrace Ridge (Northeast NE quadrant ~ 71, -25)
+  const fwX = x + wx * 4.5;
+  const fwZ = z + wz * 4.5;
+  const fwRidge = seg2(fwX, fwZ, 64.5, -18.0, 77.5, -31.5);
+  if (fwRidge < 22.0) {
+    const fwSlope = -22.8 - 17.5 * smoothstep(5.5, 19.0, fwRidge) - (fwZ + 25.0) * 0.16;
+    d = smax(d, smin(17.5 - fwRidge, fwSlope - y, 3.2), 2.5);
+  }
+
+  // Southeast Blue Hole Cathedral Dome, Jagged Skylight Chimney & Swim-Through Arches (61.5, y, 64.5)
+  const bhOuterCheck = Math.hypot(x - 61.5, z - 64.5);
+  if (bhOuterCheck < 35.0) {
+    const bhX = x + wx * 3.8;
+    const bhY = y + wy * 2.4;
+    const bhZ = z + wz * 3.8;
+    const bhR = Math.hypot(bhX - 61.5, bhZ - 64.5);
+
+    const bhOuterR = 27.5 - Math.max(0.0, bhY + 42.0) * 0.13;
+    const bhDomeTop = -2.6 - 2.6 * smoothstep(13.0, 26.5, bhR) + (fbm(bhX * 0.08, bhZ * 0.08, 6.0, 2) - 0.5) * 2.0;
+    const bhMassif = smin(bhOuterR - bhR, bhDomeTop - y, 3.0);
+    d = smax(d, bhMassif, 2.2);
+
+    // Interior vaulted chamber
+    const cavR = 16.5 - 3.6 * smoothstep(-35.0, -13.0, bhY) + 1.1 * Math.sin(bhY * 0.24);
+    const cavCeil = -9.6 - 0.028 * bhR * bhR;
+    const cavFloor = -44.2 + 1.3 * (fbm(bhX * 0.09, bhZ * 0.09, 4.0, 2) - 0.5);
+    let bhCarve = smax(bhR - cavR, bhY - cavCeil, 2.6);
+    bhCarve = smax(bhCarve, cavFloor - y, 1.8);
+
+    // Asymmetric rocky keyhole skylight chimney aligned closely with SUN_DIR (0.32, 0.91, -0.26)
+    const skyH1 = seg3(bhX, bhY, bhZ, 61.8, -26.0, 64.2, 70.8, 0.5, 56.8) - 5.2;
+    const skyH2 = seg3(bhX, bhY, bhZ, 58.0, -21.0, 66.5, 64.2, 0.5, 61.0) - 3.8;
+    bhCarve = smin(bhCarve, Math.min(skyH1, skyH2), 1.8);
+
+    // Lower West swim-in cavern portal, upper NW luminous blue side window, & SE reef arch exit
+    const winSwimIn = seg3(bhX, bhY, bhZ, 51.0, -34.0, 58.0, 34.0, -33.0, 48.0) - 5.6;
+    const winUpper = seg3(bhX, bhY, bhZ, 53.5, -18.5, 55.5, 38.0, -17.5, 44.5) - 4.3;
+    const winSE = seg3(bhX, bhY, bhZ, 72.0, -31.0, 69.0, 88.0, -31.0, 74.0) - 4.6;
+    bhCarve = smin(bhCarve, Math.min(winSwimIn, Math.min(winUpper, winSE)), 1.8);
+
+    d = smin(d, bhCarve, 1.8);
+  }
 
   // Vertical ring arches (torus SDF)
   for (let i = 0; i < ARCHES.length; i++) {
@@ -861,7 +905,8 @@ export function buildTerrain() {
           if (cw > clr) clr = cw;
         }
         const noiseSand = smoothstep(0.28, 0.56, fbm2(wx * 0.04 + 1.1, wz * 0.04 - 0.7, 3));
-        const sandMask = Math.max(clr * 0.95, noiseSand);
+        const bhSand = 1.0 - smoothstep(10.0, 18.0, Math.hypot(wx - 61.5, wz - 64.5));
+        const sandMask = Math.max(clr * 0.95, Math.max(bhSand * 0.92, noiseSand));
 
         let kSum = 0;
         if (kelpAbs) {
@@ -923,7 +968,7 @@ const SOLID_SWAY_GLSL = /* glsl */ `
       float swayZ = cos(time * 1.15 + posScale.z * 0.31) * 0.08 * h * h;
       lp.x += swayX;
       lp.z += swayZ;
-    } else if (kind > 7.5) {
+    } else if (kind > 7.5 && kind < 8.5) {
       // Sea Anemone (kind == 8): pedal column anchored while crown tentacles sway with waves & writhe organically
       float flex = smoothstep(0.18, 0.95, lp.y);
       float ang = atan(lp.z, lp.x);
@@ -936,11 +981,61 @@ const SOLID_SWAY_GLSL = /* glsl */ `
       lp.z += dz;
       lp.y += dy;
       ln = normalize(ln + vec3(dx * 0.65, 0.15 * flex, dz * 0.65));
+    } else if (kind > 9.5) {
+      // Giant Gorgonian Sea Fan (kind == 10): broad flexible fan undulates gently in cross-wall surge
+      float h = clamp(length(lp.xy) * 0.45, 0.0, 1.0);
+      float surge = sin(time * 0.95 + posScale.x * 0.25 + posScale.z * 0.28 + lp.x * 0.7);
+      float ripple = cos(time * 1.45 + lp.y * 0.8 + posScale.y * 0.4);
+      lp.z += (surge * 0.095 + ripple * 0.032) * h * h;
     }
   }
 `;
 
-export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt = false } = {}) {
+// Shared Giant Sea Fan lacy cutout alpha test used by both solid & shadow passes
+const GIANT_FAN_LACE_GLSL = /* glsl */ `
+  bool giantFanLaceKeep(vec3 lp, float ao, float seedVal, out float outRadNorm, out float outVeinMask) {
+    vec2 fp = lp.xy - vec2(0.0, 0.10);
+    float r = length(fp);
+    float th = atan(fp.x, fp.y);
+    float s = seedVal * 19.3;
+    float reniform = 1.72 * (0.64 + 0.36 * cos(clamp(th * 0.72, -1.65, 1.65)));
+    float rim = reniform * (1.0 + 0.08 * sin(th * 5.0 + s) + 0.048 * cos(th * 11.0 - s * 1.7) + 0.028 * sin(th * 21.0 + s * 2.9));
+    outRadNorm = clamp(r / max(rim, 0.25), 0.0, 1.0);
+    if (ao < 0.52) {
+      // 3D woody structural ribs & basal holdfast stay completely solid
+      outVeinMask = 1.0;
+      return true;
+    }
+    if (r > rim || abs(th) > 2.12) {
+      outVeinMask = 0.0;
+      return false;
+    }
+    float wTex1 = textureLod(uDetailTex, fp * 0.55 + vec2(seedVal), 0.0).b;
+    float wTex2 = textureLod(uDetailTex, fp * 1.45 - vec2(0.3, seedVal * 2.7), 0.0).a;
+    float warp = (wTex1 - 0.5) * 0.20 + (wTex2 - 0.5) * 0.08;
+
+    // Sharp dichotomous radial filigree ribs (peaks = narrow 1-2cm coral veins)
+    float thW = th + warp * (0.35 + 0.65 * outRadNorm);
+    float v1 = smoothstep(0.84, 0.98, abs(sin(thW * 7.5 + sin(r * 2.2 + s) * 0.28)));
+    float v2 = smoothstep(0.82, 0.97, abs(sin(thW * 18.0 + wTex1 * 1.4)));
+    float v3 = smoothstep(0.80, 0.96, abs(sin(thW * 42.0 - r * 2.5 + wTex2 * 1.8)));
+    float radVein = max(v1, max(v2 * 0.90, v3 * 0.80));
+
+    // Delicate transverse & anastomosing cellular cross-meshwork (smooth procedural sine + soft fbm, zero blocky pixels)
+    float cross1 = smoothstep(0.80, 0.96, abs(sin(r * 26.0 + thW * 3.0 + (wTex2 - 0.5) * 2.4)));
+    float cross2 = smoothstep(0.82, 0.97, abs(sin(r * 46.0 - fp.x * 18.0 + (wTex1 - 0.5) * 3.2)));
+    float filigree = max(radVein, max(cross1 * 0.82, cross2 * 0.72));
+
+    // Organic lacy filigree margin taper so outer tips dissolve into airy net
+    float marginFade = 1.0 - smoothstep(0.86, 1.0, outRadNorm) * 0.35;
+    filigree *= marginFade;
+    float poreThresh = mix(0.36, 0.56, pow(outRadNorm, 0.75));
+    outVeinMask = clamp((filigree - poreThresh) / (1.0 - poreThresh), 0.0, 1.0);
+    return filigree >= poreThresh;
+  }
+`;
+
+export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt = false, doubleSide = false } = {}) {
   const vs = /* glsl */ `
     attribute float aAo;
     ${instanced ? `
@@ -1004,6 +1099,7 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
     precision highp sampler3D;
 
     ${MEDIUM_GLSL}
+    ${GIANT_FAN_LACE_GLSL}
 
     in vec3 vWPos;
     in vec3 vWNorm;
@@ -1017,20 +1113,29 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
     layout(location = 0) out vec4 fragColor;
 
     void main() {
-      vec3 on = normalize(vOn);
-      vec3 gn = normalize(vWNorm);
+      float faceFlip = gl_FrontFacing ? 1.0 : -1.0;
+      vec3 on = normalize(vOn) * faceFlip;
+      vec3 gn = normalize(vWNorm) * faceFlip;
       float dist = length(uCamPos - vWPos);
 
       float kind = vMeta.x < -0.5 ? -1.0 : floor(vMeta.x + 0.5);
       bool isRockLike = kind < 0.5; // terrain (-1) or rock chunks/boulders (0)
       float ts = kind > 4.5 ? 1.0 : 1.0;
 
-      // 4 simultaneous triplanar detail octaves (macro -> medium -> fine -> ultra-close pores)
+      // Keep all derivative-dependent lookups in uniform control flow prior to alpha cutout
       TP A = tri(vOp, on, 0.10 * ts);
       TP B = tri(vOp, on, 0.43 * ts);
       TP C = tri(vOp, on, 1.90 * ts);
       TP F = tri(vOp, on, 6.70 * ts);
+      vec2 sandDx = dFdx(vWPos.xz);
+      vec2 sandDy = dFdy(vWPos.xz);
       float fk = isRockLike ? ss(12.0, 1.5, dist) : 0.0;
+
+      float fanRadNorm = 0.0;
+      float fanVeinMask = 1.0;
+      if (kind > 9.5) {
+        if (!giantFanLaceKeep(vLocalPos, vAo, vMeta.y, fanRadNorm, fanVeinMask)) discard;
+      }
 
       vec4 Wd = texture(uDetailTex, vec2(vOp.x * 0.06, (vOp.y + vOp.z) * 0.7));
       float big = texture(uDetailTex, vOp.xz * 0.013 + vOp.y * 0.021).a;
@@ -1137,7 +1242,7 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
         gloss = 0.22;
         bump = 0.95;
         flu = 0.18;
-      } else {
+      } else if (kind < 8.5) {
         // 8: Swaying Sea Anemones (Rose Bubble-Tip, Electric Turquoise, Golden-Coral)
         float morph = fract(vMeta.y * 3.7);
         float tipMask = smoothstep(0.58, 0.98, vAo);
@@ -1156,6 +1261,52 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
         bump = 0.45;
         flu = 0.92;
         vao = 0.45 + 0.55 * vAo;
+      } else if (kind < 9.5) {
+        // 9: Sunken WWII Fighter Plane Wreck (weathered duralumin panels, rivets, muted Pacific slate & coral encrustation)
+        vec3 paintCol = mix(vec3(0.14, 0.20, 0.21), vec3(0.35, 0.40, 0.39), sat(A.c * 1.4 - 0.15));
+        float gxSeam = abs(fract(vLocalPos.x * 1.15) - 0.5);
+        float gzSeam = abs(fract(vLocalPos.z * 1.35) - 0.5);
+        float panelSeam = 1.0 - ss(0.0, 0.036, min(gxSeam, gzSeam));
+        // Subtle rivet dots along sheet panel edges
+        float rvX = abs(fract(vLocalPos.x * 18.0) - 0.5);
+        float rvZ = abs(fract(vLocalPos.z * 18.0) - 0.5);
+        float rivet = (1.0 - ss(0.05, 0.14, length(vec2(rvX, rvZ)))) * ss(0.09, 0.01, min(gxSeam, gzSeam));
+        alb = paintCol * (0.78 + 0.36 * B.h) * (1.0 - panelSeam * 0.46) + vec3(0.08, 0.10, 0.10) * rivet;
+        // Exposed pale aluminum abrasion along wing leading edges & spars
+        float edgeWear = ss(0.42, 0.72, C.h * 0.6 + A.h * 0.5) * ss(0.70, 0.95, vAo);
+        alb = mix(alb, vec3(0.62, 0.68, 0.66), edgeWear * 0.35);
+        // Calcareous marine algae & silt accumulation on upward-facing skins
+        float encrust = ss(-0.05, 0.68, gn.y) * ss(0.42, 0.66, big * 0.55 + B.c * 0.55);
+        alb = mix(alb, vec3(0.16, 0.28, 0.22) * (0.65 + 0.6 * C.h), encrust * 0.65);
+        // Dark corroded iron soot around engine cowling & cockpit interior
+        float engineRust = ss(3.15, 4.45, vLocalPos.z);
+        alb = mix(alb, vec3(0.22, 0.15, 0.11) * (0.7 + 0.5 * B.h), engineRust * 0.62);
+        sgro = -panelSeam * 0.65;
+        gloss = 0.36;
+        bump = 0.42;
+        vao = 0.55 + 0.45 * vAo;
+      } else {
+        // 10: Giant Gorgonian Sea Fan (branching mahogany core ribs + lacy backlit olive/gold/crimson meshwork)
+        float morph = fract(vMeta.y * 5.3);
+        vec3 ribCol = vec3(0.12, 0.08, 0.05);
+        vec3 webCol = vec3(0.24, 0.23, 0.13);
+        vec3 edgeCol = vec3(0.36, 0.34, 0.21);
+        if (morph > 0.66 && morph <= 0.86) {
+          ribCol = vec3(0.18, 0.05, 0.04);
+          webCol = vec3(0.40, 0.10, 0.07);
+          edgeCol = vec3(0.56, 0.22, 0.13);
+        } else if (morph > 0.86) {
+          ribCol = vec3(0.14, 0.04, 0.11);
+          webCol = vec3(0.34, 0.09, 0.26);
+          edgeCol = vec3(0.50, 0.21, 0.42);
+        }
+        float isSkel = 1.0 - ss(0.44, 0.56, vAo);
+        vec3 laceTint = mix(webCol, edgeCol, fanRadNorm * 0.65 + (1.0 - fanVeinMask) * 0.25);
+        alb = mix(laceTint, ribCol, isSkel * 0.90) * (0.68 + 0.48 * C.h);
+        flu = 0.26;
+        gloss = 0.18;
+        bump = 0.65;
+        vao = mix(0.92, 0.65, isSkel);
       }
 
       vec3 rockN = normalize(qrot(
@@ -1186,8 +1337,6 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
       vec3 E = sunE(vWPos.y, z) * sh;
       vec3 am = (amb(vWPos, rockN, sky, z) + sideLight(vWPos, rockN, sideOpen, z)) * ao;
 
-      vec2 sandDx = dFdx(vWPos.xz);
-      vec2 sandDy = dFdy(vWPos.xz);
       vec3 sandTotal = vec3(0.0);
       if (sandMask > 0.01) {
         sandTotal = shadeDeformableSand(vWPos, gn, uCamPos, sh * (0.45 + 0.55 * sky), ca, E, am, sandDx, sandDy, gl_FragCoord.xy, sandFacetNormal);
@@ -1202,6 +1351,12 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
       vec3 amLit = (amb(vWPos, N, sky, z) + sideLight(vWPos, N, sideOpen, z)) * ao;
       vec3 dl = E * ndl * (0.10 + mix(vec3(0.33), ca, ss(0.10, 0.45, dot(gn, L))) * 2.5);
       vec3 c = alb * (dl + amLit) + emi + alb * flu * dot(dl + amLit, vec3(0.1, 0.5, 0.5));
+      if (kind > 9.5) {
+        // Backlit translucent stained-glass glow through lacy Giant Sea Fan
+        float backSun = pow(sat(dot(-V, L) * 0.55 + 0.45), 2.2);
+        float transWeight = (1.0 - (1.0 - ss(0.44, 0.56, vAo)) * 0.72);
+        c += alb * (E * (0.12 + 0.38 * backSun) + vec3(0.14, 0.28, 0.34) * sky * 0.22) * transWeight;
+      }
 
       vec3 H = normalize(V + L);
       vec3 rockSpecCol = E * (0.25 + ca) * pow(sat(dot(N, H)), mix(10.0, 70.0, gloss)) * gloss * ndl * 1.8;
@@ -1222,7 +1377,7 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
     vertexShader: vs,
     fragmentShader: fs,
     glslVersion: THREE.GLSL3,
-    side: THREE.FrontSide,
+    side: doubleSide ? THREE.DoubleSide : THREE.FrontSide,
   });
   return bindSharedUniforms(mat, sharedUniforms);
 }
@@ -1230,9 +1385,13 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
 export function createSolidShadowMaterial({ instanced = false, sharedUniforms } = {}) {
   const vs = /* glsl */ `
     ${instanced ? `
+    attribute float aAo;
     attribute vec4 iPosScale;
     attribute vec4 iQuat;
     attribute vec4 iMeta;
+    out vec3 vLocalPos;
+    out float vAo;
+    out vec4 vMeta;
     ` : ''}
     uniform float uTime;
 
@@ -1250,6 +1409,9 @@ export function createSolidShadowMaterial({ instanced = false, sharedUniforms } 
       float kind = floor(iMeta.x + 0.5);
       applyFloraAndAnemoneSway(kind, iPosScale.xyz, iMeta, uTime, lp, dummyN);
       wp = iPosScale.xyz + qrot(iQuat, lp * iPosScale.w);
+      vLocalPos = lp;
+      vAo = aAo;
+      vMeta = iMeta;
       ` : `
       wp = (modelMatrix * vec4(lp, 1.0)).xyz;
       `}
@@ -1259,8 +1421,23 @@ export function createSolidShadowMaterial({ instanced = false, sharedUniforms } 
 
   const fs = /* glsl */ `
     precision highp float;
+    ${instanced ? `
+    uniform sampler2D uDetailTex;
+    in vec3 vLocalPos;
+    in float vAo;
+    in vec4 vMeta;
+    ${GIANT_FAN_LACE_GLSL}
+    ` : ''}
     layout(location = 0) out vec4 fragColor;
     void main() {
+      ${instanced ? `
+      float kind = floor(vMeta.x + 0.5);
+      if (kind > 9.5) {
+        float rN;
+        float vM;
+        if (!giantFanLaceKeep(vLocalPos, vAo, vMeta.y, rN, vM)) discard;
+      }
+      ` : ''}
       fragColor = vec4(1.0);
     }
   `;

@@ -161,15 +161,26 @@ vec3 sunE(vec3 p) {
   return sunE(p.y, zone(p));
 }
 
+// Blue Hole cavern spatial factor centered around Southeast Dome (61.5, y, 64.5)
+float blueHoleFactor(vec3 p) {
+  float r = length(p.xz - vec2(61.5, 64.5));
+  float horiz = 1.0 - ss(15.0, 29.0, r);
+  float vert = ss(-2.5, -8.5, p.y) * ss(-49.0, -41.0, p.y);
+  return horiz * vert;
+}
+
 vec3 amb(vec3 p, vec3 n, float sky, float z) {
   float up = n.y * 0.5 + 0.5;
+  float bh = blueHoleFactor(p);
+  float caveFloor = mix(0.30, 0.014, bh);
+  float skyWeight = mix(caveFloor, 1.0, sky);
   return mix(vec3(0.22, 0.60, 0.80), vec3(0.34, 0.56, 0.82), z)
     * exp(kd(z) * min(p.y, 0.0) * 1.2)
-    * (0.30 + 0.70 * sky)
+    * skyWeight
     * (0.24 + 0.76 * up * up)
     * 1.30
     * (0.55 + 0.45 * sat(-p.y / 30.0))
-    + vec3(0.003, 0.010, 0.016);
+    + vec3(0.003, 0.010, 0.016) * (1.0 - 0.92 * bh);
 }
 
 vec3 amb(vec3 p, vec3 n) {
@@ -178,7 +189,8 @@ vec3 amb(vec3 p, vec3 n) {
 }
 
 vec3 sideLight(vec3 p, vec3 n, float open, float z) {
-  return mix(WCOL, PCOL, z) * exp(kd(z) * min(p.y, 0.0)) * open * (1.0 - abs(n.y)) * 0.70;
+  float bh = blueHoleFactor(p);
+  return mix(WCOL, PCOL, z) * exp(kd(z) * min(p.y, 0.0)) * open * (1.0 - abs(n.y)) * 0.70 * (1.0 - 0.82 * bh);
 }
 
 vec3 sideLight(vec3 p, vec3 n) {
@@ -193,7 +205,11 @@ vec3 fog(vec3 c, vec3 wp, float z) {
 
   // Underwater medium extinction & in-scattering (matches fsB background at d >= 230m)
   vec3 T = exp(-sg(z) * d) * ss(230.0, 185.0, d);
-  float rayOpen = 0.58 + 0.42 * vol(uCamPos + rd * min(d, 150.0)).g;
+  float farSky = vol(uCamPos + rd * min(d, 150.0)).g;
+  float midSky = vol(uCamPos + rd * min(d * 0.5, 26.0)).g;
+  float bhRay = max(blueHoleFactor(uCamPos), blueHoleFactor(wp));
+  float darkCave = bhRay * (1.0 - sat(max(farSky, midSky) * 1.6));
+  float rayOpen = mix(0.58, 0.05, darkCave) + 0.42 * farSky;
   vec3 uwCol = c * T + fogIn(uCamPos, rd, min(d, 240.0), z * 0.25, uSunDir) * rayOpen;
 
   if (uCamPos.y > uWaveHeight - 0.15) {

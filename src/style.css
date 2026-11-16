@@ -126,15 +126,16 @@ body {
 }
 
 .vp-btn {
+  flex-shrink: 0;
   background: rgba(6, 19, 28, 0.62);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(118, 210, 224, 0.25);
   border-radius: 999px;
-  padding: 6px 13px;
+  padding: 6px 10px;
   color: rgba(218, 242, 247, 0.88);
-  font-size: 12px;
-  letter-spacing: 0.04em;
+  font-size: 11px;
+  letter-spacing: 0.03em;
   cursor: pointer;
   transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
@@ -188,6 +189,13 @@ body {
   flex-wrap: nowrap;
   bottom: 18px;
   white-space: nowrap;
+  max-width: calc(100vw - 24px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.viewpoint-bar::-webkit-scrollbar {
+  display: none;
 }
 
 /* ---- Touch / Mobile (abyssal-garden style gestures) ---- */

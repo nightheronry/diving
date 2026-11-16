@@ -54,6 +54,43 @@ function qFromYToNormal(nx, ny, nz, yaw = 0) {
   return qMul(qNorm, qYaw);
 }
 
+function qApplyVec(q, vx, vy, vz) {
+  const qx = q[0], qy = q[1], qz = q[2], qw = q[3];
+  const cx1 = qy * vz - qz * vy + qw * vx;
+  const cy1 = qz * vx - qx * vz + qw * vy;
+  const cz1 = qx * vy - qy * vx + qw * vz;
+  return [
+    vx + 2 * (qy * cz1 - qz * cy1),
+    vy + 2 * (qz * cx1 - qx * cz1),
+    vz + 2 * (qx * cy1 - qy * cx1),
+  ];
+}
+
+const _fanY = new THREE.Vector3();
+const _fanZ = new THREE.Vector3();
+const _fanX = new THREE.Vector3();
+const _fanMat = new THREE.Matrix4();
+const _fanQ = new THREE.Quaternion();
+
+// Orient Giant Sea Fan so stem (+Y) extends out from cliff along dir=(dx,dy,dz) and broad face stands tilted against water currents
+function qAlignFan(dx, dy, dz, twistOffset = 0, faceHint = null) {
+  _fanY.set(dx, dy, dz).normalize();
+  if (faceHint) {
+    _fanZ.set(faceHint[0], faceHint[1], faceHint[2]);
+  } else {
+    // Tangent roughly perpendicular to wall normal + slightly upward (broadside toward canyon currents, not lying flat!)
+    _fanZ.set(-_fanY.z, 0.42, _fanY.x).applyAxisAngle(_fanY, twistOffset);
+  }
+  _fanZ.addScaledVector(_fanY, -_fanZ.dot(_fanY));
+  if (_fanZ.lengthSq() < 1e-4) _fanZ.set(0, 1, 0).cross(_fanY);
+  _fanZ.normalize();
+  _fanX.crossVectors(_fanY, _fanZ).normalize();
+  _fanZ.crossVectors(_fanX, _fanY).normalize();
+  _fanMat.makeBasis(_fanX, _fanY, _fanZ);
+  _fanQ.setFromRotationMatrix(_fanMat);
+  return [_fanQ.x, _fanQ.y, _fanQ.z, _fanQ.w];
+}
+
 // ============================================================================
 // Procedural Mesh Builder (Exact Geometry Control + Cavity AO)
 // ============================================================================
@@ -655,6 +692,313 @@ function meshAnemone() {
   return m.build();
 }
 
+// 13. Sunken WWII Monoplane Fighter Wreck (Radial Engine Cowl, Open Cockpit, Bent Propeller, Torn Wing Cutouts & Spars)
+function meshFighterWreck() {
+  const m = new ProcMesh();
+
+  // A. Radial-engine fuselage from tailpost (z = -5.1) to engine cowling (z = +4.5)
+  const fStations = [
+    { z: -5.1, rx: 0.14, ry: 0.28, y0: 0.14, cockpit: false },
+    { z: -3.8, rx: 0.34, ry: 0.44, y0: 0.10, cockpit: false },
+    { z: -2.1, rx: 0.54, ry: 0.62, y0: 0.04, cockpit: false },
+    { z: -0.5, rx: 0.68, ry: 0.72, y0: 0.00, cockpit: true },
+    { z: 0.45, rx: 0.72, ry: 0.74, y0: 0.00, cockpit: true },
+    { z: 1.45, rx: 0.73, ry: 0.74, y0: 0.00, cockpit: false },
+    { z: 3.10, rx: 0.74, ry: 0.74, y0: 0.00, cockpit: false },
+    { z: 4.15, rx: 0.70, ry: 0.70, y0: 0.00, cockpit: false },
+    { z: 4.55, rx: 0.58, ry: 0.58, y0: 0.00, cockpit: false },
+    { z: 4.35, rx: 0.42, ry: 0.42, y0: 0.00, cockpit: false },
+    { z: 3.70, rx: 0.38, ry: 0.38, y0: 0.00, cockpit: false },
+  ];
+  const fArcs = 16;
+  const fRings = [];
+  for (let i = 0; i < fStations.length; i++) {
+    const st = fStations[i];
+    const ring = [];
+    for (let s = 0; s < fArcs; s++) {
+      const a = (s / fArcs) * Math.PI * 2;
+      let vx = Math.sin(a) * st.rx;
+      let vy = Math.cos(a) * st.ry + st.y0;
+      let ao = 0.42 + 0.58 * (0.5 + 0.5 * Math.cos(a));
+      if (st.cockpit && Math.cos(a) > 0.56) {
+        vy = st.y0 - 0.18 + Math.cos(a) * 0.15;
+        vx *= 0.85;
+        ao = 0.24;
+      }
+      if (i >= 9) ao = 0.25;
+      ring.push(m.v(vx, vy, st.z, ao));
+    }
+    fRings.push(ring);
+  }
+  for (let i = 0; i < fRings.length - 1; i++) {
+    const r0 = fRings[i];
+    const r1 = fRings[i + 1];
+    for (let s = 0; s < fArcs; s++) {
+      const ns = (s + 1) % fArcs;
+      m.quad(r0[s], r1[s], r1[ns], r0[ns]);
+    }
+  }
+  const tailCap = m.v(0, 0.14, -5.15, 0.65);
+  for (let s = 0; s < fArcs; s++) {
+    const ns = (s + 1) % fArcs;
+    m.tri(tailCap, fRings[0][ns], fRings[0][s]);
+  }
+  const cowlCap = m.v(0, 0.0, 3.65, 0.20);
+  const lastRing = fRings[fRings.length - 1];
+  for (let s = 0; s < fArcs; s++) {
+    const ns = (s + 1) % fArcs;
+    m.tri(cowlCap, lastRing[s], lastRing[ns]);
+  }
+
+  // Open Cockpit Canopy Arch Frames & Spine Brace
+  const hoops = [1.35, 0.65, -0.35];
+  for (let hi = 0; hi < hoops.length; hi++) {
+    const hz = hoops[hi];
+    const hRad = hi === 1 ? 0.42 : 0.36;
+    const hY = hi === 0 ? 0.58 : 0.60;
+    const pts = [];
+    for (let k = 0; k <= 6; k++) {
+      const th = -Math.PI * 0.48 + (k / 6) * Math.PI * 0.96;
+      pts.push(new THREE.Vector3(Math.sin(th) * hRad, hY + Math.cos(th) * hRad * 1.15, hz));
+    }
+    m.tube(pts, 5, 0.042, true, true, () => 0.72);
+  }
+  m.tube([new THREE.Vector3(0, 0.92, 1.28), new THREE.Vector3(0, 0.95, -0.35)], 5, 0.036, true, true, () => 0.75);
+
+  // B. Nose Spinner Dome & 3-Blade Bent Radial Propeller
+  m.tube(
+    [new THREE.Vector3(0, 0, 3.85), new THREE.Vector3(0, 0, 4.65), new THREE.Vector3(0, 0, 4.98)],
+    10,
+    (t) => (t < 0.75 ? 0.24 : 0.24 * (1.0 - (t - 0.75) * 3.6)),
+    false,
+    true,
+    (t) => 0.65 + 0.35 * t
+  );
+  for (let b = 0; b < 3; b++) {
+    const ang = b * (Math.PI * 2 / 3) + 0.35;
+    const dx = Math.sin(ang);
+    const dy = Math.cos(ang);
+    const isBent = b === 1;
+    const bladePts = isBent
+      ? [
+          new THREE.Vector3(dx * 0.14, dy * 0.14, 4.72),
+          new THREE.Vector3(dx * 0.68, dy * 0.65, 4.55),
+          new THREE.Vector3(dx * 1.05, dy * 0.88, 4.18),
+          new THREE.Vector3(dx * 1.24, dy * 0.92, 3.82),
+        ]
+      : [
+          new THREE.Vector3(dx * 0.14, dy * 0.14, 4.72),
+          new THREE.Vector3(dx * 0.75, dy * 0.75, 4.74),
+          new THREE.Vector3(dx * 1.48, dy * 1.48, 4.71),
+        ];
+    m.tube(bladePts, 5, (t) => 0.105 * (1.0 - t * 0.62) + 0.025, true, true, (t) => 0.62 + 0.38 * t);
+  }
+
+  // C. Tapered Low-Wing Monoplane Main Wings with Torn Corrosion Bays & Internal Spars/Ribs
+  function buildWingSide(sideSign) {
+    const nSpan = 14;
+    const spanLen = 5.45;
+    const dihedral = 0.085;
+    const rootX = sideSign * 0.56;
+    const openBays = sideSign < 0 ? new Set([3, 4, 5, 9, 10]) : new Set([4, 5, 10]);
+
+    function wingSection(u) {
+      const absX = Math.abs(rootX) + u * spanLen;
+      const x = sideSign * absX;
+      const yBase = -0.24 + u * spanLen * dihedral;
+      const zLE = 1.65 - u * 0.52 - Math.pow(u, 3.0) * 0.35;
+      const chord = 2.38 * (1.0 - 0.56 * u) - Math.pow(u, 4.0) * 0.25;
+      const thick = 0.22 * (1.0 - 0.68 * u);
+      return { x, yBase, zLE, chord, thick };
+    }
+
+    const chordProfiles = [0.0, 0.24, 0.55, 0.84, 1.0, 0.84, 0.55, 0.24];
+    const chordYs = [0.0, 0.52, 0.48, 0.26, 0.0, -0.22, -0.34, -0.30];
+
+    const wRings = [];
+    for (let i = 0; i <= nSpan; i++) {
+      const u = i / nSpan;
+      const ws = wingSection(u);
+      const ring = [];
+      for (let k = 0; k < 8; k++) {
+        const z = ws.zLE - chordProfiles[k] * ws.chord;
+        const y = ws.yBase + chordYs[k] * ws.thick;
+        const ao = k <= 4 ? 0.72 + 0.28 * (1.0 - Math.abs(k - 2) * 0.25) : 0.45;
+        ring.push(m.v(ws.x, y, z, ao));
+      }
+      wRings.push(ring);
+    }
+
+    for (let i = 0; i < nSpan; i++) {
+      const r0 = wRings[i];
+      const r1 = wRings[i + 1];
+      const isCutBay = openBays.has(i);
+      for (let k = 0; k < 8; k++) {
+        if (isCutBay && (k === 1 || k === 2)) continue;
+        const nk = (k + 1) % 8;
+        if (sideSign > 0) m.quad(r0[k], r1[k], r1[nk], r0[nk]);
+        else m.quad(r0[k], r0[nk], r1[nk], r1[k]);
+      }
+    }
+
+    for (const sparFrac of [0.34, 0.66]) {
+      const sPts = [];
+      for (let i = 1; i <= nSpan - 1; i++) {
+        const ws = wingSection(i / nSpan);
+        sPts.push(new THREE.Vector3(ws.x, ws.yBase + 0.03, ws.zLE - ws.chord * sparFrac));
+      }
+      m.tube(sPts, 4, (t) => 0.048 * (1.0 - t * 0.45), true, true, () => 0.45);
+    }
+    openBays.forEach((bi) => {
+      const ws = wingSection((bi + 0.5) / nSpan);
+      const zFore = ws.zLE - ws.chord * 0.24;
+      const zAft = ws.zLE - ws.chord * 0.82;
+      m.tube(
+        [new THREE.Vector3(ws.x, ws.yBase + 0.04, zFore), new THREE.Vector3(ws.x, ws.yBase + 0.02, zAft)],
+        4,
+        0.036,
+        true,
+        true,
+        () => 0.55
+      );
+    });
+
+    const wsTip = wingSection(1.0);
+    const tipCenter = m.v(wsTip.x + sideSign * 0.14, wsTip.yBase, wsTip.zLE - wsTip.chord * 0.48, 0.80);
+    const tipRing = wRings[nSpan];
+    for (let k = 0; k < 8; k++) {
+      const nk = (k + 1) % 8;
+      if (sideSign > 0) m.tri(tipCenter, tipRing[nk], tipRing[k]);
+      else m.tri(tipCenter, tipRing[k], tipRing[nk]);
+    }
+
+    const aStart = wingSection(0.45);
+    const aEnd = wingSection(0.88);
+    m.tube(
+      [
+        new THREE.Vector3(aStart.x, aStart.yBase - 0.14, aStart.zLE - aStart.chord * 1.08),
+        new THREE.Vector3(aEnd.x, aEnd.yBase - 0.10, aEnd.zLE - aEnd.chord * 1.08),
+      ],
+      4,
+      (t) => 0.095 * (1.0 - t * 0.3),
+      true,
+      true,
+      () => 0.65
+    );
+  }
+  buildWingSide(-1);
+  buildWingSide(1);
+
+  // D. Empennage: Vertical Fin / Rudder + Horizontal Stabilizers
+  const vFinPts = [
+    [0.0, 0.15, -3.55],
+    [0.0, 1.05, -4.15],
+    [0.0, 1.85, -4.65],
+  ];
+  m.tube(vFinPts.map((p) => new THREE.Vector3(p[0], p[1], p[2])), 4, (t) => 0.24 * (1.0 - t * 0.65), true, true, () => 0.72);
+  m.tube(
+    [new THREE.Vector3(-2.05, 0.16, -4.55), new THREE.Vector3(0, 0.18, -4.10), new THREE.Vector3(2.05, 0.16, -4.55)],
+    4,
+    (t) => 0.26 - Math.abs(t - 0.5) * 0.34,
+    true,
+    true,
+    () => 0.72
+  );
+
+  return m.build();
+}
+
+// 14. Monumental Giant Gorgonian Sea Fan (3D Woody Bifurcating Ribs + Sculpted Ruffled Lace Membrane)
+function meshGiantFan() {
+  const m = new ProcMesh();
+  rseed(88421);
+
+  function ruffleZ(x, rNorm) {
+    return (Math.sin(x * 3.1 + rNorm * 2.5) * 0.065 + Math.cos(x * 5.2 - rNorm * 3.1) * 0.032) * rNorm;
+  }
+
+  // A. Flared holdfast collar anchoring into vertical drop-off cliff wall (y = -0.12..+0.16, ao <= 0.42 -> opaque!)
+  m.tube(
+    [new THREE.Vector3(0, -0.12, 0), new THREE.Vector3(0, 0.02, 0), new THREE.Vector3(0, 0.16, 0)],
+    8,
+    (t) => 0.16 * (1.0 - t * 0.52),
+    true,
+    false,
+    () => 0.26
+  );
+
+  // B. Recursive 3D bifurcating mahogany skeletal veins threaded smoothly along the ruffled fan sheet
+  function growVein(origin, angle, len, radius, tier) {
+    const segs = 4;
+    const pts = [origin.clone()];
+    let cx = origin.x;
+    let cy = origin.y;
+    let curAng = angle;
+    const segL = len / segs;
+
+    for (let i = 1; i <= segs; i++) {
+      curAng += rr(-0.12, 0.12);
+      cx += Math.sin(curAng) * segL;
+      cy += Math.cos(curAng) * segL;
+      const rNorm = Math.min(1.0, Math.hypot(cx, cy - 0.10) / 1.75);
+      pts.push(new THREE.Vector3(cx, cy, ruffleZ(cx, rNorm)));
+    }
+
+    m.tube(
+      pts,
+      tier <= 1 ? 5 : 4,
+      (t) => Math.max(0.008, radius * (1.0 - 0.45 * t)),
+      tier === 0,
+      tier >= 3,
+      () => Math.min(0.44, 0.22 + tier * 0.06)
+    );
+
+    if (tier < 3) {
+      const tip = pts[pts.length - 1];
+      const branches = tier === 0 ? 3 : 2;
+      const spread = tier === 0 ? 0.92 : 0.44;
+      for (let b = 0; b < branches; b++) {
+        const subOff = (b / Math.max(1, branches - 1) - 0.5) * 2.0 * spread + rr(-0.08, 0.08);
+        growVein(tip, curAng + subOff, len * rr(0.66, 0.78), radius * 0.56, tier + 1);
+      }
+    }
+  }
+  growVein(new THREE.Vector3(0, 0.10, 0), 0.0, 0.60, 0.040, 0);
+
+  // C. Wide 238° rounded reniform polar lacy membrane (aAo = 0.88..0.98 -> perforated smoothly in GLSL cutout)
+  const radRings = 14;
+  const angSegs = 42;
+  const maxTheta = 2.08;
+  const webGrid = [];
+  for (let ir = 0; ir <= radRings; ir++) {
+    const rt = ir / radRings;
+    const row = [];
+    for (let ia = 0; ia <= angSegs; ia++) {
+      const at = (ia / angSegs - 0.5) * 2.0 * maxTheta;
+      const reniform = 1.76 * (0.64 + 0.36 * Math.cos(Math.max(-1.65, Math.min(1.65, at * 0.72))));
+      const lobeScale = 1.0 + 0.08 * Math.sin(at * 5.0) + 0.048 * Math.cos(at * 11.0);
+      const rMax = reniform * lobeScale;
+      const r = 0.08 + rt * rMax;
+      const x = Math.sin(at) * r;
+      const y = 0.10 + Math.cos(at) * r;
+      const z = ruffleZ(x, rt);
+      row.push(m.v(x, y, z, 0.88 + 0.10 * rt));
+    }
+    webGrid.push(row);
+  }
+  for (let ir = 0; ir < radRings; ir++) {
+    for (let ia = 0; ia < angSegs; ia++) {
+      const a = webGrid[ir][ia];
+      const b = webGrid[ir + 1][ia];
+      const c = webGrid[ir + 1][ia + 1];
+      const d_ = webGrid[ir][ia + 1];
+      m.quad(a, b, c, d_);
+    }
+  }
+
+  return m.build();
+}
+
 // Base kelp / seagrass blade ribbon geometry (width [-1..1] tapered, height [0..1])
 function buildBladeGeometry(segmentsY, widthRatio = 1.0) {
   const pos = [];
@@ -1052,6 +1396,8 @@ function buildBubbles(sharedUniforms, terrain) {
     { x: 5, z: 40, rate: 0.85 }, // Purple grotto
     { x: -29, z: 16, rate: 0.9 },
     { x: 30, z: -14, rate: 0.95 },
+    { x: 61.5, z: 64.5, rate: 1.05 }, // Rising silver bubbles inside Blue Hole god rays
+    { x: 71.0, z: -25.0, rate: 0.92 }, // Bubbles escaping WWII Fighter Plane cockpit
   ];
 
   const perVent = 64;
@@ -1244,7 +1590,7 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
   const group = new THREE.Group();
   const shadowGroup = new THREE.Group();
 
-  // Build all 13 sculptural geometries (including cleavage chunks, kelp stipes, & swaying sea anemones)
+  // Build all 15 sculptural geometries (including WWII Fighter Plane Wreck & Monumental Giant Sea Fan)
   const geoms = {
     chunk0: meshChunk(0),
     chunk1: meshChunk(1),
@@ -1259,6 +1605,8 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
     fluke: meshFluke(),
     ship: meshShip(),
     anemone: meshAnemone(),
+    fighter: meshFighterWreck(),
+    giantFan: meshGiantFan(),
   };
 
   const buckets = {
@@ -1275,6 +1623,8 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
     fluke: [],
     ship: [],
     anemone: [],
+    fighter: [],
+    giantFan: [],
   };
 
   const tmpPos = new THREE.Vector3();
@@ -1321,6 +1671,139 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
       extra: 1.0,
     });
     flyPts.push(new THREE.Vector3(49.7, -33.6, 29.0));
+
+    // 1b. Hero WWII Fighter Plane Wreck perched on NE Sunlit Coral Shelf (71, gy, -25)
+    const fwX = 71.0;
+    const fwZ = -25.0;
+    const fwY = terrain.gy(fwX, fwZ) + 0.52;
+    const fwScale = 1.28;
+    const fwQ = qMul(
+      qFromAxisAngle(0, 1, 0, -2.18),
+      qMul(qFromAxisAngle(0, 0, 1, 0.14), qFromAxisAngle(1, 0, 0, -0.14))
+    );
+    buckets.fighter.push({
+      x: fwX,
+      y: fwY,
+      z: fwZ,
+      scale: fwScale,
+      q: fwQ,
+      kind: 9,
+      seed: 0.72,
+      zoneTint: 0.0,
+      extra: 1.0,
+    });
+    flyPts.push(new THREE.Vector3(fwX - 4.0, fwY + 3.2, fwZ + 6.0));
+    glintOrigins.push(new THREE.Vector3(fwX, fwY + 1.5, fwZ));
+
+    // Low-profile encrusting coral tufts hugging wing roots & reef crevices (matching Photo 1 proportions)
+    const wingCorals = [
+      { lx: -1.45, ly: -0.14, lz: 0.45, type: 'staghorn', s: 0.44 },
+      { lx: -2.40, ly: -0.10, lz: 0.85, type: 'staghorn', s: 0.36 },
+      { lx: 1.45, ly: -0.12, lz: 0.65, type: 'anemone', s: 0.38 },
+      { lx: 2.35, ly: -0.08, lz: 0.35, type: 'gorgonian', s: 0.46 },
+      { lx: -0.95, ly: -0.06, lz: 1.55, type: 'anemone', s: 0.42 },
+    ];
+    for (let wi = 0; wi < wingCorals.length; wi++) {
+      const wc = wingCorals[wi];
+      const [ox, oy, oz] = qApplyVec(fwQ, wc.lx * fwScale, wc.ly * fwScale, wc.lz * fwScale);
+      const qLoc = qFromYToNormal(0.1, 0.98, 0.1, rr(0, Math.PI * 2));
+      const item = {
+        x: fwX + ox,
+        y: fwY + oy - 0.05,
+        z: fwZ + oz,
+        scale: wc.s,
+        q: qLoc,
+        seed: (wi + 1) * 0.31,
+        zoneTint: 0.35,
+        extra: 1.0,
+      };
+      if (wc.type === 'sponge') buckets[`sponge${wi % 3}`].push({ ...item, kind: 1 });
+      else if (wc.type === 'staghorn') buckets.staghorn.push({ ...item, kind: 2 });
+      else if (wc.type === 'gorgonian') buckets.gorgonian.push({ ...item, kind: 3 });
+      else if (wc.type === 'tubes') buckets.tubes.push({ ...item, kind: 4 });
+      else buckets.anemone.push({ ...item, kind: 8 });
+    }
+
+    // 1c. Hero Giant Sea Fan Drop-Off Wall (Photo 4 silhouette: right cliff wall + monumental backlit fans jutting into left open canyon!)
+    const wallProbes = [
+      { y: -18.8, z: 18.8, s: 2.15, seed: 0.14, twist: 0.0, face: [-0.08, 0.32, -0.94] },
+      { y: -23.6, z: 22.8, s: 1.85, seed: 0.28, twist: 0.12, face: [-0.14, 0.28, -0.95] },
+      { y: -15.4, z: 24.5, s: 1.65, seed: 0.48, twist: -0.08, face: [-0.12, 0.36, -0.92] },
+      { y: -26.8, z: 17.5, s: 1.55, seed: 0.72, twist: 0.16, face: [-0.10, 0.30, -0.94] },
+    ];
+    for (let pi = 0; pi < wallProbes.length; pi++) {
+      const wpSpec = wallProbes[pi];
+      let hit = false;
+      for (let px = -14.0; px >= -34.0; px -= 0.7) {
+        if (terrain.dw(px, wpSpec.y, wpSpec.z) >= -0.05) {
+          tmpPos.set(px, wpSpec.y, wpSpec.z);
+          terrain.snap(tmpPos, tmpNorm);
+          if (terrain.dw(tmpPos.x + tmpNorm.x * 4.5, tmpPos.y, tmpPos.z + tmpNorm.z * 4.5) < -1.8) {
+            hit = true;
+            break;
+          }
+        }
+      }
+      if (!hit) continue;
+      const dx = Math.max(0.65, tmpNorm.x);
+      const dy = Math.max(-0.05, Math.min(0.28, tmpNorm.y * 0.25 + 0.12));
+      const dz = tmpNorm.z * 0.45;
+      const len = Math.hypot(dx, dy, dz) || 1;
+      const odx = dx / len, ody = dy / len, odz = dz / len;
+      buckets.giantFan.push({
+        x: tmpPos.x - odx * 0.20,
+        y: tmpPos.y - ody * 0.10,
+        z: tmpPos.z - odz * 0.12,
+        scale: wpSpec.s,
+        q: qAlignFan(odx, ody, odz, wpSpec.twist, wpSpec.face),
+        kind: 10,
+        seed: wpSpec.seed,
+        zoneTint: 0.4,
+        extra: 1.0,
+      });
+      glintOrigins.push(new THREE.Vector3(tmpPos.x + odx * 2.2, tmpPos.y + 0.6, tmpPos.z + odz * 2.2));
+    }
+
+    // Hero Giant Sea Fans flanking Blue Hole entrance ledges & canyon drop-offs
+    for (let fi = 0; fi < 36; fi++) {
+      const nearBH = fi < 8;
+      const vid = terrain.pickVertex((x, y, z, nx, ny) => {
+        if (Math.abs(ny) > 0.42 || y < -35.5 || y > -10.5) return false;
+        if (nearBH) return Math.hypot(x - 42, z - 52) < 16;
+        return Math.abs(x) < 92 && Math.abs(z) < 92;
+      });
+      const fx = terrain.wp[vid * 3];
+      const fy = terrain.wp[vid * 3 + 1];
+      const fz = terrain.wp[vid * 3 + 2];
+      const fnx = terrain.wn[vid * 3];
+      const fny = terrain.wn[vid * 3 + 1];
+      const fnz = terrain.wn[vid * 3 + 2];
+      // Require clear deep drop-off water 4.5m in front of the wall so fan never hits opposite wall
+      if (terrain.dw(fx + fnx * 4.5, fy, fz + fnz * 4.5) >= -2.0) continue;
+      const scale = nearBH ? rr(1.35, 2.05) : rr(1.25, 2.15);
+      const dy = Math.max(-0.12, Math.min(0.42, fny * 0.3 + 0.18));
+      buckets.giantFan.push({
+        x: fx - fnx * 0.14,
+        y: fy - dy * 0.08,
+        z: fz - fnz * 0.14,
+        scale,
+        q: qAlignFan(fnx, dy, fnz, rr(-0.35, 0.35)),
+        kind: 10,
+        seed: rnd(),
+        zoneTint: Math.max(terrain.zoneP(fx, fz), terrain.magAt(fx, fz)),
+        extra: 1.0,
+      });
+    }
+
+    // Blue Hole luminous ray glints & sunlit floor rubble boulder highlights
+    for (let gi = 0; gi < 20; gi++) {
+      glintOrigins.push(new THREE.Vector3(
+        61.5 + rr(-5.5, 5.5),
+        rr(-39.0, -10.0),
+        64.5 + rr(-5.5, 5.5)
+      ));
+    }
+    flyPts.push(new THREE.Vector3(54.0, -35.0, 68.0));
   }
 
   // 2a. Cliff-Embedded Cleavage Boulders & abyssal-garden BOULD Formations
@@ -1333,6 +1816,7 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
     const ny = terrain.wn[vid * 3 + 1];
     const nz = terrain.wn[vid * 3 + 2];
     if (y < -40.5 && nearClearing(x, z, 8.0)) continue;
+    if (Math.hypot(x - 71.0, z + 25.0) < 10.5 && y > -26.0) continue; // Keep Fighter Wreck wing bed clear
 
     const k = i % 3;
     const scale = (i < 550 && ny > 0.38) ? rr(0.85, 2.05) : rr(0.32, 0.85);
@@ -1638,7 +2122,7 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
       const dist = Math.sqrt(rnd()) * g.r;
       const cx = g.x + Math.cos(ang) * dist;
       const cz = g.z + Math.sin(ang) * dist;
-      if (Math.hypot(cx, cz) < 9.0 || Math.hypot(cx + 40, cz + 28) < 15.0 || Math.hypot(cx - 35, cz - 22) < 15.0 || Math.hypot(cx + 11, cz - 18) < 7.0 || (Math.abs(cx) < 12.0 && cz > -34.0 && cz < 28.0)) continue;
+      if (Math.hypot(cx, cz) < 9.0 || Math.hypot(cx + 40, cz + 28) < 15.0 || Math.hypot(cx - 35, cz - 22) < 15.0 || Math.hypot(cx + 11, cz - 18) < 7.0 || Math.hypot(cx + 18, cz - 14) < 12.0 || Math.hypot(cx + 18, cz - 24) < 11.5 || Math.hypot(cx - 71, cz + 25) < 16.0 || Math.hypot(cx - 61.5, cz - 64.5) < 30.0 || (Math.abs(cx) < 12.0 && cz > -34.0 && cz < 28.0)) continue;
 
       const floorY = terrain.gy(cx, cz);
       if (floorY > -15) continue;
@@ -1695,10 +2179,12 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
 
   // Build instanced solid meshes + shadow meshes AFTER kelpStipe & all props are populated
   const instSolidMat = createSolidMaterial(sharedUniforms, { instanced: true });
+  const instDoubleSolidMat = createSolidMaterial(sharedUniforms, { instanced: true, doubleSide: true });
   const instShadowMat = createSolidShadowMaterial({ instanced: true, sharedUniforms });
 
   for (const key of Object.keys(geoms)) {
-    const batch = createInstancedBatch(geoms[key], buckets[key], instSolidMat, instShadowMat);
+    const mat = key === 'giantFan' ? instDoubleSolidMat : instSolidMat;
+    const batch = createInstancedBatch(geoms[key], buckets[key], mat, instShadowMat);
     if (batch) {
       group.add(batch.mesh);
       shadowGroup.add(batch.shadowMesh);
@@ -1719,7 +2205,7 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
     const nx = terrain.wn[vid * 3];
     const ny = terrain.wn[vid * 3 + 1];
     const nz = terrain.wn[vid * 3 + 2];
-    if ((by < -39.5 && Math.abs(bx) < 9.2 && bz > -24.0 && bz < 10.0) || (by < -40.0 && nearClearing(bx, bz, 8.5) && (i % 12 !== 0))) continue;
+    if (Math.hypot(bx - 71.0, bz + 25.0) < 12.5 || Math.hypot(bx + 17.5, bz - 25.0) < 9.0 || (by < -39.5 && Math.abs(bx) < 9.2 && bz > -24.0 && bz < 10.0) || (by < -40.0 && nearClearing(bx, bz, 8.5) && (i % 12 !== 0))) continue;
 
     const mz = terrain.magAt(bx, bz);
     const pz = terrain.zoneP(bx, bz);
@@ -1763,6 +2249,7 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
     const bx = terrain.wp[vid * 3];
     const by = terrain.wp[vid * 3 + 1];
     const bz = terrain.wp[vid * 3 + 2];
+    if (Math.hypot(bx - 62.0, bz - 64.0) < 30.0) continue; // Keep Blue Hole rocky ceiling & skylight rim silhouettes crisp!
     const patchN = Math.floor(rr(2, 5));
     for (let p = 0; p < patchN; p++) {
       smallBlades.push({

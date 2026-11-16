@@ -406,8 +406,10 @@ const raysMat = new THREE.ShaderMaterial({
       float g = 0.68;
       float hg = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cosS, 0.05), 1.5);
       float phase = 0.25 + 0.75 * min(hg * 0.28, 1.8);
+      float bhCamDist = smoothstep(46.0, 24.0, length(uCamPos.xz - vec2(61.5, 64.5)));
+      float rayPhase = mix(phase, max(phase, 0.48), bhCamDist);
 
-      const int STEPS = ${isMobileDevice ? 10 : 20};
+      const int STEPS = ${isMobileDevice ? 14 : 28};
       float stepL = (tMax - 0.6) / float(STEPS);
       if (stepL <= 0.001) {
         fragColor = vec4(0.0);
@@ -424,19 +426,28 @@ const raysMat = new THREE.ShaderMaterial({
 
         float sh = shadow1(wp);
         if (sh > 0.01) {
+          float bhHere = blueHoleFactor(wp);
           vec2 q = wp.xz - uSunDir.xz * (wp.y / max(uSunDir.y, 0.15));
-          float ca1 = textureLod(uWaterTex, q / 27.0, 2.0).r;
-          float ca2 = textureLod(uWaterTex, q.yx / 11.0 + 0.3, 1.5).r;
+          float ca1 = textureLod(uWaterTex, q / 24.0, 1.8).r;
+          float ca2 = textureLod(uWaterTex, q.yx / 9.5 + 0.3, 1.2).r;
+          float caFine = textureLod(uWaterTex, q / 4.8 - vec2(uTime * 0.015, 0.0), 0.8).r;
           float pat = smoothstep(0.30, 0.70, ca1) * smoothstep(0.15, 0.60, ca2);
+          float bhStreaks = smoothstep(0.20, 0.84, caFine) * smoothstep(0.14, 0.72, ca1);
           vec4 vSample = vol(wp);
           float skyOpen = vSample.g * (0.40 + 0.60 * vSample.x);
-          vec3 light = sunE(wp) * sh * (0.08 + 2.65 * pat) * skyOpen;
+          // Inside Blue Hole cavern, diagonal SUN_DIR shafts track true 3D skylight hole via shadow1(wp) + vSample.x
+          float effOpen = mix(skyOpen, max(skyOpen, vSample.x * 0.88 + 0.12), bhHere);
+          float nearFade = smoothstep(1.2, 5.0, t);
+          float bhDepthFade = mix(1.0, smoothstep(-47.0, -14.0, wp.y) * 0.82 + 0.25, bhHere);
+          vec3 beamPat = vec3(mix(0.08 + 2.65 * pat, 0.05 + 1.45 * bhStreaks + 0.55 * pat, bhHere));
+          vec3 light = sunE(wp) * sh * beamPat * effOpen * nearFade * bhDepthFade * mix(1.0, 0.56, bhHere);
           vec3 ext = exp(-SIG * (t * 1.05));
           accum += light * ext * stepL;
         }
       }
 
-      vec3 col = accum * vec3(0.08, 0.34, 0.50) * phase * 0.028 * underwater;
+      vec3 rayTint = mix(vec3(0.08, 0.34, 0.50), vec3(0.06, 0.30, 0.54), bhCamDist);
+      vec3 col = accum * rayTint * rayPhase * 0.028 * underwater;
       fragColor = vec4(col, 1.0);
     }
   `,
@@ -625,8 +636,13 @@ const postMat = new THREE.ShaderMaterial({
       vec3 rays = sampleRaysBilateral(vUv);
       vec3 bloom = texture(uBloomTex, vUv).rgb;
 
-      // Apply volumetric god rays & bloom primarily in open mid/far water so close foreground sand & creatures stay crisp
-      hdr += rays * uwCam * (0.14 + 0.86 * farWeight) + bloom * (0.05 + 0.09 * farWeight);
+      // Apply volumetric god rays & bloom across open ocean AND dark cave interiors while preserving dynamic range
+      float zNdc = sceneDepth * 2.0 - 1.0;
+      float linZ = (sceneDepth >= 0.9999) ? 240.0 : (2.0 * 0.25 * 650.0) / (650.0 + 0.25 - zNdc * (650.0 - 0.25));
+      float rayRangeWeight = smoothstep(2.5, 13.0, linZ);
+      float bhCamPost = blueHoleFactor(uCamPos);
+      float rayVis = mix(0.14 + 0.86 * farWeight, rayRangeWeight * 0.85, sat(bhCamPost * 0.95 + smoothstep(10.0, 28.0, linZ) * 0.45));
+      hdr += rays * uwCam * rayVis + bloom * (0.045 + 0.075 * farWeight);
 
       // Soft photographic lens vignette (matching deformable-sand postprocess.ts)
       vec2 vc = vUv * 2.0 - 1.0;
@@ -690,6 +706,8 @@ function buildLookPose(px, yOff, pz, tx, ty, tz, absoluteY = false) {
   return { pos: [p.x, p.y, p.z], yaw, pitch };
 }
 
+const fighterWreckY = terrain.gy(71.0, -25.0) + 0.52;
+
 const VIEWPOINTS = [
   { name: 'Main Canyon & 1:1 Whales', ...buildLookPose(12.5, -18.5, 14.0, -5.0, -19.5, -10.5, true) },
   { name: 'Abyssal Canyon & Fluke', ...buildLookPose(0.8, 2.2, -11.5, -0.5, -45.2, -6.8) },
@@ -697,6 +715,9 @@ const VIEWPOINTS = [
   { name: 'Sponge Canyon', ...buildLookPose(-55.0, 2.2, -18.0, -60.0, -30.0, 8.0) },
   { name: 'Purple Grotto', ...buildLookPose(3.0, 2.4, 58.0, 2.0, -28.0, 96.0) },
   { name: 'Sunny Spectral Surface', ...buildLookPose(-14.5, 6.2, 23.0, 0.5, -0.5, -6.0, true) },
+  { name: 'Blue Hole God Rays', ...buildLookPose(47.8, -39.2, 71.2, 62.5, -24.5, 62.0, true) },
+  { name: 'WWII Fighter Wreck', ...buildLookPose(61.5, fighterWreckY + 4.8, -32.2, 71.0, fighterWreckY + 0.1, -25.0, true) },
+  { name: 'Giant Sea Fan Drop-Off', ...buildLookPose(-18.6, -21.8, 12.0, -22.2, -18.0, 19.2, true) },
 ];
 
 let yaw = VIEWPOINTS[0].yaw;
@@ -1158,7 +1179,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyH') {
     document.getElementById('ui-container').classList.toggle('hud-hidden');
   }
-  if (e.code >= 'Digit1' && e.code <= 'Digit6') {
+  if (e.code >= 'Digit1' && e.code <= 'Digit9') {
     const idx = Number(e.code.slice(5)) - 1;
     setViewpoint(idx, false);
   }
@@ -1319,9 +1340,13 @@ function updateCameraAndUniforms(dt, elapsed) {
     if (zoneValEl) {
       let zName = 'Open Coral Reef';
       if (p.y >= 0) zName = 'Ocean Surface';
-      else if (Math.hypot(p.x - 35, p.z - 22) < 18) zName = 'Whale Fluke Bay';
-      else if (Math.hypot(p.x + 40, p.z + 28) < 20) zName = 'Shipwreck Cove';
-      else if (Math.hypot(p.x - 5, p.z - 40) < 20) zName = 'Purple Grotto';
+      else if (Math.hypot(p.x - 61.5, p.z - 64.5) < 28) zName = 'Blue Hole 藍洞';
+      else if (Math.hypot(p.x - 71.0, p.z + 25.0) < 24) zName = 'Fighter Wreck 戰機殘骸';
+      else if (Math.hypot(p.x + 22.0, p.z - 20.0) < 16 && p.y > -32 && p.y < -12) zName = 'Giant Sea Fan Wall 大海扇';
+      else if (Math.hypot(p.x + 5, p.z + 4) < 16) zName = 'Whale Fluke Bay';
+      else if (Math.hypot(p.x - 59.5, p.z - 6.0) < 20) zName = 'Shipwreck Cove';
+      else if (Math.hypot(p.x - 6, p.z - 84) < 28) zName = 'Purple Grotto';
+      else if (Math.hypot(p.x + 60, p.z) < 22) zName = 'Sponge Canyon';
       else if (Math.hypot(p.x - 1, p.z + 14) < 14) zName = 'Cathedral Arch';
       else if (Math.abs(p.x) < 16 && Math.abs(p.z) < 24) zName = 'Coral Canyon';
       zoneValEl.textContent = zName;
