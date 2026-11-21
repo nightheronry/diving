@@ -1332,7 +1332,7 @@ function buildSpermWhaleGeometry() {
 }
 
 const WHALE_WAVE_GLSL = `
-  vec3 whaleDeform(vec3 p, vec2 sc, vec4 st) {
+  vec3 whaleDeform(vec3 p, vec2 sc, vec4 st, vec2 look) {
     float t = sc.x;
     float w = sc.y;
 
@@ -1368,6 +1368,12 @@ const WHALE_WAVE_GLSL = `
     float turnCurve = st.z * pow(max(0.0, t - 0.35), 2.0);
     p.x += turnCurve * 1.85;
     p.y += p.x * st.z * w * 0.14;
+
+    // 6. Curious head look-at bend toward nearby diver (anterior rostrum t < 0.38)
+    float headBend = smoothstep(0.38, 0.02, t);
+    float headArm = headBend * headBend;
+    p.x += look.x * headArm * 1.45;
+    p.y += look.y * headArm * 0.95;
     return p;
   }
 `;
@@ -1378,6 +1384,7 @@ function createWhaleMaterial(sharedUniforms, whaleUniforms) {
     attribute float aPartId;
 
     uniform vec4 uWhaleState;
+    uniform vec2 uWhaleLook;
 
     ${MEDIUM_GLSL}
     ${WHALE_WAVE_GLSL}
@@ -1390,14 +1397,14 @@ function createWhaleMaterial(sharedUniforms, whaleUniforms) {
     out float vPart;
 
     void main() {
-      vec3 lp = whaleDeform(position, aSpineCoord, uWhaleState);
+      vec3 lp = whaleDeform(position, aSpineCoord, uWhaleState, uWhaleLook);
 
       // Unclamped centered finite-difference Jacobian transpose normal transform
       float t0 = aSpineCoord.x - 0.012;
       float t1 = aSpineCoord.x + 0.012;
       float dz = -(t1 - t0) * 9.80;
-      vec3 d0 = whaleDeform(position, vec2(t0, aSpineCoord.y), uWhaleState);
-      vec3 d1 = whaleDeform(position, vec2(t1, aSpineCoord.y), uWhaleState);
+      vec3 d0 = whaleDeform(position, vec2(t0, aSpineCoord.y), uWhaleState, uWhaleLook);
+      vec3 d1 = whaleDeform(position, vec2(t1, aSpineCoord.y), uWhaleState, uWhaleLook);
       vec3 dDdz = (d1 - d0) / dz;
       vec3 ln = normalize(vec3(
         normal.x,
@@ -1613,6 +1620,7 @@ function createWhaleMaterial(sharedUniforms, whaleUniforms) {
   });
   bindSharedUniforms(mat, sharedUniforms);
   mat.uniforms.uWhaleState = whaleUniforms.uWhaleState;
+  mat.uniforms.uWhaleLook = whaleUniforms.uWhaleLook;
   return mat;
 }
 
@@ -1620,9 +1628,10 @@ function createWhaleShadowMaterial(sharedUniforms, whaleUniforms) {
   const vs = /* glsl */ `
     attribute vec2 aSpineCoord;
     uniform vec4 uWhaleState;
+    uniform vec2 uWhaleLook;
     ${WHALE_WAVE_GLSL}
     void main() {
-      vec3 lp = whaleDeform(position, aSpineCoord, uWhaleState);
+      vec3 lp = whaleDeform(position, aSpineCoord, uWhaleState, uWhaleLook);
       vec4 wp = modelMatrix * vec4(lp, 1.0);
       gl_Position = projectionMatrix * viewMatrix * wp;
     }
@@ -1645,6 +1654,7 @@ function createWhaleShadowMaterial(sharedUniforms, whaleUniforms) {
   });
   bindSharedUniforms(mat, sharedUniforms);
   mat.uniforms.uWhaleState = whaleUniforms.uWhaleState;
+  mat.uniforms.uWhaleLook = whaleUniforms.uWhaleLook;
   return mat;
 }
 
@@ -2202,7 +2212,7 @@ export class WhalePodController {
     this._prevCFlukeY = this.cFlukePos.y;
   }
 
-  update(dt) {
+  update(dt, camPos = null) {
     const safeDt = Math.min(dt, 0.05);
     this.mTime += safeDt;
     this.cTime += safeDt;
@@ -2250,6 +2260,33 @@ export class WhalePodController {
       Math.max(-0.45, Math.min(0.45, mYawRate * 1.8)),
       mState.flukeAmp
     );
+
+    // Mother Whale curiosity look-at toward nearby diver (within 32m, ahead or beside head)
+    let targetLookX = 0.0;
+    let targetLookY = 0.0;
+    if (camPos) {
+      const dx = camPos.x - this.mPos.x;
+      const dy = camPos.y - this.mPos.y;
+      const dz = camPos.z - this.mPos.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist > 1.5 && dist < 32.0) {
+        const invD = 1.0 / dist;
+        const nx = dx * invD;
+        const ny = dy * invD;
+        const nz = dz * invD;
+        const fwdDot = nx * this.fwd.x + ny * this.fwd.y + nz * this.fwd.z;
+        if (fwdDot > -0.35) {
+          const prox = Math.max(0.0, Math.min(1.0, (32.0 - dist) / 22.0));
+          const rightDot = nx * this.right.x + ny * this.right.y + nz * this.right.z;
+          const upDot = nx * this.up.x + ny * this.up.y + nz * this.up.z;
+          targetLookX = Math.max(-0.28, Math.min(0.28, rightDot * 0.42)) * prox;
+          targetLookY = Math.max(-0.18, Math.min(0.18, upDot * 0.30)) * prox;
+        }
+      }
+    }
+    const lookAlpha = 1.0 - Math.exp(-safeDt * 2.2);
+    this.motherUniforms.uWhaleLook.value.x += (targetLookX - this.motherUniforms.uWhaleLook.value.x) * lookAlpha;
+    this.motherUniforms.uWhaleLook.value.y += (targetLookY - this.motherUniforms.uWhaleLook.value.y) * lookAlpha;
 
     // 2. Calf Sperm Whale: Independent 23.5s Cycle + Bonded Pod Cohesion Steering
     const cState = this._cState || (this._cState = { pitch: 0, arch: 0, flukeAmp: 0.85, depth: -0.92, spouting: false, isDiving: false });
@@ -2360,8 +2397,14 @@ export class WhalePodController {
 
 export function createWhalePodRig(terrain, sharedUniforms) {
   const whaleGeo = buildSpermWhaleGeometry();
-  const motherUniforms = { uWhaleState: { value: new THREE.Vector4(0, 0, 0, 1.0) } };
-  const calfUniforms = { uWhaleState: { value: new THREE.Vector4(0, 0, 0, 1.0) } };
+  const motherUniforms = {
+    uWhaleState: { value: new THREE.Vector4(0, 0, 0, 1.0) },
+    uWhaleLook: { value: new THREE.Vector2(0, 0) },
+  };
+  const calfUniforms = {
+    uWhaleState: { value: new THREE.Vector4(0, 0, 0, 1.0) },
+    uWhaleLook: { value: new THREE.Vector2(0, 0) },
+  };
 
   const motherMat = createWhaleMaterial(sharedUniforms, motherUniforms);
   const motherShadowMat = createWhaleShadowMaterial(sharedUniforms, motherUniforms);
@@ -2716,7 +2759,334 @@ function buildSeabirds(sharedUniforms, nBirds = 48) {
   return mesh;
 }
 
-export function compileMarineLife(terrain, sharedUniforms) {
+function buildSeaTurtleGeometry() {
+  // Procedural Green Sea Turtle (Chelonia mydas), facing +Z, dorsal +Y, wingspan ±1.28m
+  const pos = [];
+  const norm = [];
+  const part = [];
+  const idx = [];
+
+  const pushTri = (ax, ay, az, bx, by, bz, cx, cy, cz, pid) => {
+    const ux = bx - ax, uy = by - ay, uz = bz - az;
+    const vx = cx - ax, vy = cy - ay, vz = cz - az;
+    let nx = uy * vz - uz * vy;
+    let ny = uz * vx - ux * vz;
+    let nz = ux * vy - uy * vx;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    nx /= l; ny /= l; nz /= l;
+    const base = pos.length / 3;
+    pos.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+    norm.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
+    part.push(pid, pid, pid);
+    idx.push(base, base + 1, base + 2);
+  };
+
+  const addLoft = (rings, pid, flip = false) => {
+    const base = pos.length / 3;
+    const nS = rings[0].length;
+    for (let r = 0; r < rings.length; r++) {
+      for (let s = 0; s < nS; s++) {
+        const pt = rings[r][s];
+        pos.push(pt[0], pt[1], pt[2]);
+        norm.push(0, 1, 0);
+        part.push(pid);
+      }
+    }
+    for (let r = 0; r < rings.length - 1; r++) {
+      for (let s = 0; s < nS; s++) {
+        const sn = (s + 1) % nS;
+        const a = base + r * nS + s;
+        const b = base + r * nS + sn;
+        const c = base + (r + 1) * nS + s;
+        const d = base + (r + 1) * nS + sn;
+        if (!flip) {
+          idx.push(a, c, b, b, c, d);
+        } else {
+          idx.push(a, b, c, b, d, c);
+        }
+      }
+    }
+  };
+
+  // 1. Domed teardrop Carapace (part = 0) & Plastron underside (part = 1)
+  const nU = 16;
+  const nV = 18;
+  const shellPts = [];
+  for (let i = 0; i <= nU; i++) {
+    const u = i / nU; // 0 = rear tail tip (-0.90), 1 = front neck notch (+0.82)
+    const z = -0.90 + u * 1.72;
+    const wProfile = Math.sin(Math.pow(u, 0.78) * Math.PI);
+    const rx = 0.64 * Math.pow(Math.max(0.02, wProfile), 0.78);
+    const domeH = 0.30 * Math.pow(Math.max(0.01, Math.sin(u * Math.PI)), 0.72);
+    const ring = [];
+    for (let j = 0; j < nV; j++) {
+      const a = (j / nV) * Math.PI * 2;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const x = ca * rx;
+      // Top is domed carapace, bottom is flatter plastron
+      const y = sa >= 0
+        ? Math.pow(sa, 0.76) * domeH + 0.02
+        : sa * 0.11 - 0.02;
+      ring.push([x, y, z, sa >= -0.08 ? 0.0 : 1.0]);
+    }
+    shellPts.push(ring);
+  }
+  const sBase = pos.length / 3;
+  for (let i = 0; i <= nU; i++) {
+    for (let j = 0; j < nV; j++) {
+      const p = shellPts[i][j];
+      pos.push(p[0], p[1], p[2]);
+      norm.push(0, 1, 0);
+      part.push(p[3]);
+    }
+  }
+  for (let i = 0; i < nU; i++) {
+    for (let j = 0; j < nV; j++) {
+      const jn = (j + 1) % nV;
+      const a = sBase + i * nV + j;
+      const b = sBase + i * nV + jn;
+      const c = sBase + (i + 1) * nV + j;
+      const d = sBase + (i + 1) * nV + jn;
+      idx.push(a, b, c, b, d, c);
+    }
+  }
+
+  // 2. Sculpted Head & Neck (part = 2)
+  const headRings = [];
+  const hSegs = 10;
+  const hSpecs = [
+    { z: 0.62, y: 0.02, rx: 0.14, ry: 0.11 },
+    { z: 0.80, y: 0.04, rx: 0.13, ry: 0.105 },
+    { z: 0.96, y: 0.06, rx: 0.155, ry: 0.125 },
+    { z: 1.12, y: 0.055, rx: 0.135, ry: 0.11 },
+    { z: 1.24, y: 0.03, rx: 0.075, ry: 0.065 },
+    { z: 1.29, y: 0.015, rx: 0.015, ry: 0.015 },
+  ];
+  for (const hs of hSpecs) {
+    const ring = [];
+    for (let j = 0; j < hSegs; j++) {
+      const a = (j / hSegs) * Math.PI * 2;
+      ring.push([Math.cos(a) * hs.rx, hs.y + Math.sin(a) * hs.ry, hs.z]);
+    }
+    headRings.push(ring);
+  }
+  addLoft(headRings, 2.0, true);
+
+  // 3. Long Hydrofoil Fore-Flippers (left part = 3, right part = 4)
+  for (const side of [-1, 1]) {
+    const fRings = [];
+    const fSec = 10;
+    const fSegs = 10;
+    for (let i = 0; i <= fSegs; i++) {
+      const t = i / fSegs; // 0 = shoulder -> 1 = wingtip
+      const sx = side * (0.42 + t * 0.96);
+      const sweepZ = 0.44 - Math.pow(t, 1.35) * 0.56 + Math.sin(t * Math.PI) * 0.14;
+      const droopY = -0.02 - t * 0.06 + Math.sin(t * Math.PI) * 0.04;
+      const chord = (0.31 * Math.sin(Math.pow(t, 0.58) * Math.PI * 0.92) + 0.05) * (1.0 - t * 0.35);
+      const thick = (0.045 * (1.0 - t * 0.72) + 0.008);
+      const ring = [];
+      for (let j = 0; j < fSec; j++) {
+        const a = (j / fSec) * Math.PI * 2;
+        const cz = Math.cos(a) * chord;
+        const cy = Math.sin(a) * thick;
+        ring.push([sx, droopY + cy, sweepZ + cz]);
+      }
+      fRings.push(ring);
+    }
+    addLoft(fRings, side < 0 ? 3.0 : 4.0, side > 0);
+  }
+
+  // 4. Rear Steering Hind Flippers (part = 5)
+  for (const side of [-1, 1]) {
+    const rRings = [];
+    const rSec = 8;
+    const rSegs = 6;
+    for (let i = 0; i <= rSegs; i++) {
+      const t = i / rSegs;
+      const sx = side * (0.24 + t * 0.32);
+      const sz = -0.68 - t * 0.54;
+      const sy = -0.03 - t * 0.02;
+      const halfW = (0.14 * Math.sin(Math.pow(t, 0.65) * Math.PI * 0.88) + 0.035);
+      const thick = 0.026 * (1.0 - t * 0.65) + 0.006;
+      const ring = [];
+      for (let j = 0; j < rSec; j++) {
+        const a = (j / rSec) * Math.PI * 2;
+        ring.push([sx + Math.cos(a) * halfW * 0.55, sy + Math.sin(a) * thick, sz + Math.cos(a) * halfW * 0.45]);
+      }
+      rRings.push(ring);
+    }
+    addLoft(rRings, 5.0, side > 0);
+  }
+
+  // Small tail tip
+  pushTri(-0.04, -0.01, -0.84, 0.04, -0.01, -0.84, 0.0, -0.02, -1.04, 5.0);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(norm, 3));
+  geo.setAttribute('aTPart', new THREE.Float32BufferAttribute(part, 1));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function buildJellyfishGeometry() {
+  // Procedural Translucent Moon Jellyfish (Aurelia): scalloped dome bell + 4 ruffled oral arms + 12 tentacles
+  const pos = [];
+  const norm = [];
+  const jMeta = []; // x = part (0=bell, 1=oral arm, 2=tentacle), y = radial/vertical parameter 0..1, z = angle
+  const idx = [];
+
+  // 1. Scalloped Dome Bell (part = 0)
+  const rRings = 12;
+  const rSegs = 28;
+  const bellBase = 0;
+  for (let i = 0; i <= rRings; i++) {
+    const u = i / rRings; // 0 = apex -> 1 = rim
+    const theta = u * Math.PI * 0.56;
+    const rad = Math.sin(theta) * 0.44;
+    const y = Math.cos(theta) * 0.28;
+    for (let j = 0; j < rSegs; j++) {
+      const a = (j / rSegs) * Math.PI * 2;
+      const scallop = 1.0 + 0.055 * Math.cos(a * 8.0) * Math.pow(u, 2.0);
+      const x = Math.cos(a) * rad * scallop;
+      const z = Math.sin(a) * rad * scallop;
+      const yScallop = y - 0.025 * Math.cos(a * 8.0) * Math.pow(u, 2.5);
+      pos.push(x, yScallop, z);
+      norm.push(Math.cos(a) * Math.sin(theta), Math.cos(theta), Math.sin(a) * Math.sin(theta));
+      jMeta.push(0.0, u, a);
+    }
+  }
+  for (let i = 0; i < rRings; i++) {
+    for (let j = 0; j < rSegs; j++) {
+      const jn = (j + 1) % rSegs;
+      const a = bellBase + i * rSegs + j;
+      const b = bellBase + i * rSegs + jn;
+      const c = bellBase + (i + 1) * rSegs + j;
+      const d = bellBase + (i + 1) * rSegs + jn;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+
+  // 2. 4 Ruffled Oral Arms hanging inside bell (part = 1)
+  const armSegs = 12;
+  for (let k = 0; k < 4; k++) {
+    const ang = (k / 4) * Math.PI * 2 + 0.35;
+    const cx = Math.cos(ang);
+    const cz = Math.sin(ang);
+    const tx = -cz;
+    const tz = cx;
+    const aBase = pos.length / 3;
+    for (let i = 0; i <= armSegs; i++) {
+      const v = i / armSegs;
+      const y = 0.09 - v * 0.92;
+      const radial = 0.075 + v * 0.06 + Math.sin(v * 7.5 + k) * 0.028;
+      const w = (0.068 * (1.0 - v * 0.68)) * (1.0 + 0.25 * Math.sin(v * 14.0));
+      const mx = cx * radial;
+      const mz = cz * radial;
+      pos.push(mx - tx * w, y, mz - tz * w);
+      norm.push(cx, 0.1, cz);
+      jMeta.push(1.0, v, ang);
+
+      pos.push(mx + tx * w, y, mz + tz * w);
+      norm.push(cx, 0.1, cz);
+      jMeta.push(1.0, v, ang);
+    }
+    for (let i = 0; i < armSegs; i++) {
+      const p0 = aBase + i * 2;
+      idx.push(p0, p0 + 2, p0 + 1, p0 + 1, p0 + 2, p0 + 3);
+    }
+  }
+
+  // 3. 12 Trailing Marginal Tentacles from bell rim (part = 2)
+  const tenSegs = 12;
+  for (let k = 0; k < 12; k++) {
+    const ang = (k / 12) * Math.PI * 2;
+    const cx = Math.cos(ang);
+    const cz = Math.sin(ang);
+    const tx = -cz;
+    const tz = cx;
+    const tBase = pos.length / 3;
+    const len = 1.05 + (k % 3) * 0.24;
+    for (let i = 0; i <= tenSegs; i++) {
+      const v = i / tenSegs;
+      const y = -0.02 - v * len;
+      const r = 0.41 * (1.0 - v * 0.25);
+      const w = 0.011 * (1.0 - v * 0.65);
+      const mx = cx * r;
+      const mz = cz * r;
+      pos.push(mx - tx * w, y, mz - tz * w);
+      norm.push(cx, 0.0, cz);
+      jMeta.push(2.0, v, ang);
+
+      pos.push(mx + tx * w, y, mz + tz * w);
+      norm.push(cx, 0.0, cz);
+      jMeta.push(2.0, v, ang);
+    }
+    for (let i = 0; i < tenSegs; i++) {
+      const p0 = tBase + i * 2;
+      idx.push(p0, p0 + 2, p0 + 1, p0 + 1, p0 + 2, p0 + 3);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(norm, 3));
+  geo.setAttribute('aJMeta', new THREE.Float32BufferAttribute(jMeta, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function buildGardenEelGeometry() {
+  // Procedural Spotted Garden Eel (Heteroconger hassi): slender curved vertical tube emerging from sand burrow
+  const pos = [];
+  const norm = [];
+  const eelT = []; // 0 = sand burrow root -> 1 = curved snout head
+  const idx = [];
+  const rings = 14;
+  const segs = 8;
+  const totalH = 0.88;
+
+  for (let i = 0; i <= rings; i++) {
+    const t = i / rings;
+    // Slight natural S-curve neck posture facing into current (+Z)
+    const y = t * totalH - 0.08; // embed root slightly into sand
+    const zCurve = Math.pow(t, 1.8) * 0.14 + Math.sin(t * Math.PI) * 0.03;
+    const rad = t > 0.92
+      ? 0.018 * (1.0 - (t - 0.92) / 0.08 * 0.72)
+      : (0.023 - t * 0.0045);
+    for (let j = 0; j < segs; j++) {
+      const a = (j / segs) * Math.PI * 2;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      pos.push(ca * rad, y, zCurve + sa * rad);
+      norm.push(ca, 0.08, sa);
+      eelT.push(t);
+    }
+  }
+  for (let i = 0; i < rings; i++) {
+    for (let j = 0; j < segs; j++) {
+      const jn = (j + 1) % segs;
+      const a = i * segs + j;
+      const b = i * segs + jn;
+      const c = (i + 1) * segs + j;
+      const d = (i + 1) * segs + jn;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(norm, 3));
+  geo.setAttribute('aEelT', new THREE.Float32BufferAttribute(eelT, 1));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) {
   rseed(88421);
   const group = new THREE.Group();
   const shadowGroup = new THREE.Group();
@@ -2953,9 +3323,80 @@ export function compileMarineLife(terrain, sharedUniforms) {
       vec3 S = normalize(cross(vec3(0.0, 1.0, 0.0), T));
       vec3 Up = cross(T, S);
       vec3 off = S * ((h.y - 0.5) * 5.0 + sin(t * 0.6 + s * 40.0) * 0.5) + Up * ((h.z - 0.5) * 3.2 + cos(t * 0.5 + s * 31.0) * 0.4);
+      vec3 baseP = P + off;
+
+      // Reactive School Evasion AI: scatter, bank, and burst speed around Diver, Patrol Shark & Sperm Whales
+      vec3 evade = vec3(0.0);
+      float panic = 0.0;
+      float swimSpd = min(length(uSwimmerVel), 9.0);
+
+      // 1. Diver threat
+      vec3 dCam = baseP - uCamPos;
+      float camLen = length(dCam);
+      float camRad = 7.8 + swimSpd * 0.42;
+      if (camLen < camRad) {
+        float f = smoothstep(camRad, 1.2, camLen);
+        float f2 = f * f;
+        vec3 away = camLen > 0.05 ? (dCam / camLen) : vec3(0.0, 0.4, 0.9);
+        // Individual scatter jitter so fish fan outward organically
+        vec3 swirl = normalize(away + (h - 0.5) * 0.55);
+        evade += swirl * (f2 * (4.4 + swimSpd * 0.25));
+        panic = max(panic, f);
+      }
+
+      // 2. Patrol Shark threat
+      if (uSharkWake.w > 0.1) {
+        vec3 dSh = baseP - uSharkWake.xyz;
+        float shLen = length(dSh);
+        if (shLen < 10.5) {
+          float f = smoothstep(10.5, 1.8, shLen);
+          evade += (dSh / max(shLen, 0.1)) * (f * f * 5.8);
+          panic = max(panic, f * 1.1);
+        }
+      }
+
+      // 3. Colossal Mother & Calf Whales
+      if (uWhaleBody0.w > 0.1) {
+        vec3 dW0 = baseP - uWhaleBody0.xyz;
+        float w0Len = length(dW0);
+        if (w0Len < 15.0) {
+          float f = smoothstep(15.0, 3.2, w0Len);
+          evade += (dW0 / max(w0Len, 0.1)) * (f * f * 6.8);
+          panic = max(panic, f);
+        }
+      }
+      if (uWhaleBody1.w > 0.1) {
+        vec3 dW1 = baseP - uWhaleBody1.xyz;
+        float w1Len = length(dW1);
+        if (w1Len < 10.5) {
+          float f = smoothstep(10.5, 2.2, w1Len);
+          evade += (dW1 / max(w1Len, 0.1)) * (f * f * 4.8);
+          panic = max(panic, f * 0.9);
+        }
+      }
+
+      if (panic > 0.005) {
+        baseP += evade;
+        // Clamp below ocean surface so evading fish never jump into air
+        baseP.y = min(baseP.y, -1.6);
+        vec3 escDir = normalize(evade + T * 0.45);
+        T = normalize(mix(T, escDir, clamp(panic * 0.82, 0.0, 0.85)));
+        S = normalize(cross(vec3(0.0, 1.0, 0.0), T) + vec3(1e-4));
+        Up = cross(T, S);
+        // Defensive banking roll while darting away
+        float bank = clamp(dot(evade, S) * 0.18, -0.65, 0.65) * panic;
+        float cb = cos(bank);
+        float sb = sin(bank);
+        vec3 sRot = S * cb + Up * sb;
+        Up = Up * cb - S * sb;
+        S = sRot;
+      }
+
       vec3 l = position * iFMeta.z * (0.75 + 0.5 * h.z);
-      l.z += sin(t * 9.0 + s * 50.0 + l.x * 5.0) * 0.22 * (0.25 * iFMeta.z - l.x);
-      vec3 w = P + off + T * l.x + Up * l.y + S * l.z;
+      float tailFreq = 9.0 + panic * 11.5;
+      float tailAmp = 0.22 + panic * 0.16;
+      l.z += sin(t * tailFreq + s * 50.0 + l.x * 5.0) * tailAmp * (0.25 * iFMeta.z - l.x);
+      vec3 w = baseP + T * l.x + Up * l.y + S * l.z;
 
       vWPos = w;
       vWNorm = normalize(T * normal.x + Up * normal.y + S * normal.z);
@@ -3007,6 +3448,752 @@ export function compileMarineLife(terrain, sharedUniforms) {
   fishMesh.frustumCulled = false;
   group.add(fishMesh);
 
+  // ---- 3. Symbiotic Clownfish (Amphiprion ocellaris) orbiting grounded Sea Anemones ----
+  rseed(40411);
+  const anchors = anemoneAnchors && anemoneAnchors.length > 0
+    ? anemoneAnchors
+    : [
+        [-4.5, terrain.gy(-4.5, -14.0), -14.0, 0.72],
+        [10.2, terrain.gy(10.2, -11.5), -11.5, 0.78],
+        [-14.5, terrain.gy(-14.5, -3.5), -3.5, 0.80],
+        [4.5, terrain.gy(4.5, -31.0), -31.0, 0.75],
+        [-2.0, terrain.gy(-2.0, -56.0), -56.0, 0.72],
+      ];
+  const clownRecords = [];
+  for (let ai = 0; ai < anchors.length && clownRecords.length < 116; ai++) {
+    const a = anchors[ai];
+    const perColony = ai < 10 ? 3 : 2;
+    for (let k = 0; k < perColony && clownRecords.length < 116; k++) {
+      const sz = 0.22 + rnd() * 0.10;
+      const rad = (0.42 + rnd() * 0.44) * Math.max(0.7, a[3] || 0.85);
+      const speed = (1.15 + rnd() * 0.85) * (k % 2 === 0 ? 1 : -1);
+      const hOff = 0.46 + rnd() * 0.48;
+      clownRecords.push([a[0], a[1], a[2], rad, rnd(), speed, sz, hOff]);
+    }
+  }
+  const nClownfish = clownRecords.length;
+  const clownGeo = new THREE.InstancedBufferGeometry();
+  clownGeo.index = fishBaseGeo.index;
+  clownGeo.attributes.position = fishBaseGeo.attributes.position;
+  clownGeo.attributes.normal = fishBaseGeo.attributes.normal;
+  clownGeo.instanceCount = nClownfish;
+
+  const cAnchorArr = new Float32Array(nClownfish * 4);
+  const cMetaArr = new Float32Array(nClownfish * 4);
+  for (let i = 0; i < nClownfish; i++) {
+    const r = clownRecords[i];
+    const i4 = i * 4;
+    cAnchorArr[i4] = r[0];
+    cAnchorArr[i4 + 1] = r[1];
+    cAnchorArr[i4 + 2] = r[2];
+    cAnchorArr[i4 + 3] = r[3];
+    cMetaArr[i4] = r[4];
+    cMetaArr[i4 + 1] = r[5];
+    cMetaArr[i4 + 2] = r[6];
+    cMetaArr[i4 + 3] = r[7];
+  }
+  clownGeo.setAttribute('iCAnchor', new THREE.InstancedBufferAttribute(cAnchorArr, 4));
+  clownGeo.setAttribute('iCMeta', new THREE.InstancedBufferAttribute(cMetaArr, 4));
+  clownGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, -25, 0), 220);
+
+  const clownVs = /* glsl */ `
+    attribute vec4 iCAnchor;
+    attribute vec4 iCMeta;
+    ${MEDIUM_GLSL}
+    out vec3 vWPos;
+    out vec3 vWNorm;
+    out vec3 vOrigPos;
+    out float vShadow;
+
+    void main() {
+      float s = iCMeta.x;
+      float spd = iCMeta.y;
+      float sz = iCMeta.z;
+      float baseH = iCMeta.w;
+      float t = uTime;
+
+      // Dive down into anemone tentacles for shelter when diver approaches < 5.0m
+      float camDist = distance(iCAnchor.xyz, uCamPos);
+      float shelter = 1.0 - smoothstep(1.6, 5.2, camDist);
+
+      float ph = s * 6.28318 + t * spd * (1.0 + shelter * 0.75);
+      float orbitR = iCAnchor.w * mix(1.0, 0.34, shelter);
+      float curH = mix(baseH + 0.16 * sin(t * 2.1 + s * 19.0), 0.16 + 0.08 * sin(t * 5.0 + s * 12.0), shelter);
+
+      // Lively figure-8 / eccentric reef orbit above home anemone
+      vec3 off = vec3(
+        cos(ph) * orbitR,
+        curH,
+        sin(ph * 1.0 + 0.45 * sin(ph * 2.0)) * orbitR * 0.85
+      );
+      vec3 dOff = vec3(
+        -sin(ph) * orbitR * spd,
+        0.16 * cos(t * 2.1 + s * 19.0) * 2.1 * (1.0 - shelter),
+        cos(ph + 0.45 * sin(ph * 2.0)) * (1.0 + 0.9 * cos(ph * 2.0)) * orbitR * 0.85 * spd
+      );
+      vec3 T = normalize(dOff + vec3(1e-4, 0.0, 0.0));
+      vec3 S = normalize(cross(vec3(0.0, 1.0, 0.0), T) + vec3(1e-4));
+      vec3 Up = cross(T, S);
+
+      vec3 l = position * sz;
+      // Energetic clownfish wiggling swim stroke
+      float wigFreq = 13.5 + shelter * 8.0;
+      l.z += sin(t * wigFreq + s * 40.0 + l.x * 6.5) * 0.28 * (0.25 * sz - l.x);
+      vec3 w = iCAnchor.xyz + off + T * l.x + Up * l.y + S * l.z;
+
+      vWPos = w;
+      vWNorm = normalize(T * normal.x + Up * normal.y + S * normal.z);
+      vOrigPos = position;
+      vShadow = shadow1(w);
+      gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
+    }
+  `;
+
+  const clownFs = /* glsl */ `
+    precision highp float;
+    precision highp sampler3D;
+    ${MEDIUM_GLSL}
+    in vec3 vWPos;
+    in vec3 vWNorm;
+    in vec3 vOrigPos;
+    in float vShadow;
+    layout(location = 0) out vec4 fragColor;
+
+    void main() {
+      vec3 n = normalize(vWNorm);
+      if (!gl_FrontFacing) n = -n;
+      vec3 L = uSunDir;
+      vec3 V = normalize(uCamPos - vWPos);
+
+      // Iconic Amphiprion ocellaris bright orange with 3 crisp black-edged white bands
+      float x = vOrigPos.x; // nose ~+0.50 -> tail ~-0.65
+      float bHead = smoothstep(0.16, 0.19, x) * (1.0 - smoothstep(0.28, 0.31, x));
+      float bMid  = smoothstep(-0.14, -0.10, x) * (1.0 - smoothstep(0.02, 0.06, x));
+      float bTail = smoothstep(-0.44, -0.41, x) * (1.0 - smoothstep(-0.34, -0.31, x));
+      float whiteBand = clamp(bHead + bMid + bTail, 0.0, 1.0);
+
+      float eHead = smoothstep(0.13, 0.17, x) * (1.0 - smoothstep(0.30, 0.34, x));
+      float eMid  = smoothstep(-0.17, -0.12, x) * (1.0 - smoothstep(0.04, 0.09, x));
+      float eTail = smoothstep(-0.47, -0.43, x) * (1.0 - smoothstep(-0.32, -0.28, x));
+      float blackEdge = clamp((eHead + eMid + eTail) - whiteBand, 0.0, 1.0);
+
+      vec3 orange = mix(vec3(0.95, 0.34, 0.04), vec3(0.98, 0.48, 0.07), smoothstep(-0.12, 0.14, vOrigPos.y));
+      vec3 alb = mix(orange, vec3(0.05, 0.05, 0.06), blackEdge * 0.92);
+      alb = mix(alb, vec3(0.94, 0.96, 0.98), whiteBand);
+      // Black fin edging at dorsal/ventral fringes
+      float finTrim = smoothstep(0.17, 0.24, abs(vOrigPos.y)) * 0.72;
+      alb = mix(alb, vec3(0.04, 0.04, 0.05), finTrim);
+
+      vec3 E = sunE(vWPos) * vShadow;
+      float ca = caus(vWPos);
+      vec3 c = alb * (E * (0.30 + 0.78 * sat(dot(n, L))) * (0.75 + 0.75 * ca) + amb(vWPos, n) * 1.35 + sideLight(vWPos, n));
+      c += E * pow(sat(dot(n, normalize(V + L))), 28.0) * 0.65;
+      fragColor = vec4(fog(c, vWPos), 1.0);
+    }
+  `;
+
+  const clownMat = bindSharedUniforms(new THREE.ShaderMaterial({
+    uniforms: sharedUniforms,
+    vertexShader: clownVs,
+    fragmentShader: clownFs,
+    glslVersion: THREE.GLSL3,
+    side: THREE.DoubleSide,
+  }), sharedUniforms);
+  const clownMesh = new THREE.Mesh(clownGeo, clownMat);
+  clownMesh.frustumCulled = false;
+  group.add(clownMesh);
+
+  // ---- 4. 4 Gliding Green Sea Turtles (Chelonia mydas) with Figure-8 Rowing Flippers ----
+  const turtleBaseGeo = buildSeaTurtleGeometry();
+  const turtleGeo = new THREE.InstancedBufferGeometry();
+  turtleGeo.index = turtleBaseGeo.index;
+  turtleGeo.attributes.position = turtleBaseGeo.attributes.position;
+  turtleGeo.attributes.normal = turtleBaseGeo.attributes.normal;
+  turtleGeo.attributes.aTPart = turtleBaseGeo.attributes.aTPart;
+
+  const turtleSpecs = [
+    // Main Coral Canyon cruiser (visible in Vista 1)
+    { cx: -2.0, cy: -17.5, cz: -4.0, rx: 14.0, rz: 15.0, speed: 0.115, scale: 1.18, ph: 0.4 },
+    // Giant Sea Fan Wall glider (visible in Vista 9)
+    { cx: -14.0, cy: -18.5, cz: 18.0, rx: 12.0, rz: 12.0, speed: 0.105, scale: 1.08, ph: 2.2 },
+    // WWII Fighter Wreck Reef patroller (visible in Vista 8)
+    { cx: 69.0, cy: -24.0, cz: -24.0, rx: 14.0, rz: 12.0, speed: 0.12, scale: 1.12, ph: 4.1 },
+    // Sunken Shipwreck Cove cruiser (visible in Vista 3)
+    { cx: 56.0, cy: -18.0, cz: 10.0, rx: 15.0, rz: 14.0, speed: 0.10, scale: 1.04, ph: 5.3 },
+  ];
+  const nTurtles = turtleSpecs.length;
+  turtleGeo.instanceCount = nTurtles;
+
+  const tOrbit = new Float32Array(nTurtles * 4);
+  const tParams = new Float32Array(nTurtles * 4);
+  for (let i = 0; i < nTurtles; i++) {
+    const s = turtleSpecs[i];
+    tOrbit.set([s.cx, s.cy, s.cz, s.rx], i * 4);
+    tParams.set([s.rz, s.speed, s.scale, s.ph], i * 4);
+  }
+  turtleGeo.setAttribute('iTOrbit', new THREE.InstancedBufferAttribute(tOrbit, 4));
+  turtleGeo.setAttribute('iTParams', new THREE.InstancedBufferAttribute(tParams, 4));
+  turtleGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, -18, 0), 220);
+
+  const turtleVs = /* glsl */ `
+    attribute float aTPart;
+    attribute vec4 iTOrbit;
+    attribute vec4 iTParams;
+    ${MEDIUM_GLSL}
+
+    out vec3 vWPos;
+    out vec3 vWNorm;
+    out vec3 vLPos;
+    flat out float vTPart;
+
+    vec3 turtlePosAt(float t, vec4 orb, vec4 prm) {
+      float a = t * prm.y + prm.w;
+      float x = orb.x + cos(a) * orb.w;
+      float z = orb.z + sin(a) * prm.x + 2.6 * sin(2.0 * a) * 0.25;
+      float y = orb.y + sin(a * 1.5 + prm.w) * 2.2;
+      return vec3(x, y, z);
+    }
+
+    void main() {
+      vec3 p0 = turtlePosAt(uTime, iTOrbit, iTParams);
+      vec3 p1 = turtlePosAt(uTime + 0.08, iTOrbit, iTParams);
+      vec3 p2 = turtlePosAt(uTime + 0.22, iTOrbit, iTParams);
+      vec3 fwd = normalize(p1 - p0);
+      vec3 fwd2 = normalize(p2 - p1);
+      vec3 latAcc = fwd2 - fwd;
+      vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), fwd));
+      vec3 up = normalize(cross(fwd, right));
+      float bank = clamp(dot(latAcc, right) * 5.2, -0.35, 0.35);
+      float cb = cos(bank);
+      float sb = sin(bank);
+      vec3 rBank = right * cb + up * sb;
+      vec3 uBank = up * cb - right * sb;
+      mat3 basis = mat3(rBank, uBank, fwd);
+
+      vec3 lp = position;
+      vec3 ln = normal;
+      float strokePh = uTime * 1.85 + iTParams.w * 2.3;
+      // Asymmetric graceful sea-turtle glide: strong downstroke, calm glide recovery
+      float flap = sin(strokePh) + 0.22 * sin(strokePh * 2.0 - 0.6);
+      float sweep = cos(strokePh);
+
+      if (aTPart > 2.5 && aTPart < 4.5) {
+        // Fore-flippers: figure-8 hydrofoil rowing stroke anchored at shoulder (|x| ~ 0.42)
+        float side = aTPart < 3.5 ? -1.0 : 1.0;
+        float span = max(0.0, abs(lp.x) - 0.38);
+        float tipFlex = pow(span, 1.35);
+        float pitchTwist = sweep * 0.32 * min(1.0, span * 1.2);
+        float dy = flap * 0.52 * span - cos(strokePh) * 0.09 * tipFlex;
+        float dz = sweep * 0.26 * span;
+        lp.y += dy + (lp.z - 0.30) * pitchTwist * 0.45;
+        lp.z += dz;
+        lp.x -= side * abs(flap) * 0.10 * span;
+        ln = normalize(ln + vec3(-side * flap * 0.35 * span, 0.0, -sweep * 0.22));
+      } else if (aTPart > 4.5) {
+        // Hind flippers: subtle steering trim
+        lp.y += sin(strokePh - 1.2) * 0.05 * max(0.0, -lp.z - 0.68);
+      } else if (aTPart > 1.5 && aTPart < 2.5) {
+        // Head & neck gentle breathing lift
+        float neck = smoothstep(0.68, 1.22, lp.z);
+        lp.y += sin(strokePh * 0.5) * 0.045 * neck;
+      }
+
+      // Subtle body heave synchronized with flipper power stroke
+      lp.y -= flap * 0.055;
+      lp *= iTParams.z;
+
+      vec3 wp = p0 + basis * lp;
+      vec3 wn = normalize(basis * ln);
+
+      vWPos = wp;
+      vWNorm = wn;
+      vLPos = position;
+      vTPart = aTPart;
+      gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+    }
+  `;
+
+  const turtleFs = /* glsl */ `
+    precision highp float;
+    precision highp sampler3D;
+    ${MEDIUM_GLSL}
+    in vec3 vWPos;
+    in vec3 vWNorm;
+    in vec3 vLPos;
+    flat in float vTPart;
+    layout(location = 0) out vec4 fragColor;
+
+    // Compact 3D value noise for organic carapace & plastron grain
+    float tNoise3(vec3 p) {
+      vec3 i = floor(p);
+      vec3 f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      float n = dot(i, vec3(1.0, 57.0, 113.0));
+      return mix(
+        mix(mix(fract(sin(n) * 43758.5), fract(sin(n + 1.0) * 43758.5), f.x),
+            mix(fract(sin(n + 57.0) * 43758.5), fract(sin(n + 58.0) * 43758.5), f.x), f.y),
+        mix(mix(fract(sin(n + 113.0) * 43758.5), fract(sin(n + 114.0) * 43758.5), f.x),
+            mix(fract(sin(n + 170.0) * 43758.5), fract(sin(n + 171.0) * 43758.5), f.x), f.y),
+        f.z
+      );
+    }
+
+    // Compact 2D Voronoi cell distance for hexagonal turtle carapace scutes
+    vec2 scuteVoronoi(vec2 p) {
+      vec2 n = floor(p);
+      vec2 f = fract(p);
+      float md1 = 8.0;
+      float md2 = 8.0;
+      for (int j = -1; j <= 1; j++) {
+        for (int i = -1; i <= 1; i++) {
+          vec2 g = vec2(float(i), float(j));
+          vec2 o = 0.5 + 0.34 * sin(vec2(dot(n + g, vec2(127.1, 311.7)), dot(n + g, vec2(269.5, 183.3))) * 1.15);
+          vec2 r = g + o - f;
+          float d = dot(r, r);
+          if (d < md1) { md2 = md1; md1 = d; }
+          else if (d < md2) { md2 = d; }
+        }
+      }
+      return vec2(sqrt(md1), sqrt(md2) - sqrt(md1));
+    }
+
+    void main() {
+      vec3 N = normalize(vWNorm);
+      if (!gl_FrontFacing) N = -N;
+
+      vec3 alb;
+      float specPow = 42.0;
+      float specStr = 0.32;
+
+      if (vTPart < 0.5) {
+        // Carapace: olive-amber & mahogany hexagonal scutes with sunburst growth rings
+        vec2 sc = scuteVoronoi(vLPos.xz * vec2(4.4, 3.8));
+        float seam = 1.0 - smoothstep(0.02, 0.10, sc.y);
+        float centerSun = smoothstep(0.45, 0.05, sc.x);
+        float radialGrain = 0.5 + 0.5 * sin(sc.x * 26.0 + tNoise3(vLPos * 9.0) * 2.5);
+        vec3 olive = vec3(0.22, 0.28, 0.14);
+        vec3 amber = vec3(0.48, 0.34, 0.14);
+        vec3 mahog = vec3(0.18, 0.12, 0.07);
+        alb = mix(olive, amber, centerSun * 0.72 + radialGrain * 0.18);
+        alb = mix(alb, mahog, seam * 0.78);
+        // Pale marginal rim around edge of carapace
+        float rim = smoothstep(0.48, 0.62, length(vLPos.xz * vec2(1.0, 0.72)));
+        alb = mix(alb, vec3(0.56, 0.49, 0.30), rim * 0.48);
+        specPow = 54.0;
+        specStr = 0.38;
+      } else if (vTPart < 1.5) {
+        // Plastron underside: warm creamy-ochre belly plates
+        alb = mix(vec3(0.58, 0.54, 0.38), vec3(0.46, 0.42, 0.28), tNoise3(vLPos * 6.0));
+        specStr = 0.16;
+      } else {
+        // Head & flippers: olive-slate skin with characteristic dark polygonal scale spots
+        vec2 sc = scuteVoronoi(vLPos.xz * 12.0 + vLPos.y * 8.0);
+        float spot = smoothstep(0.14, 0.24, sc.y);
+        vec3 skinPale = vec3(0.44, 0.45, 0.32);
+        vec3 skinScale = vec3(0.15, 0.19, 0.11);
+        alb = mix(skinPale, skinScale, spot * 0.85);
+        // Crisp dark eye spots on sides of head
+        if (vTPart < 2.5) {
+          float eyeD = length(vec3(abs(vLPos.x) - 0.115, vLPos.y - 0.085, vLPos.z - 1.08));
+          alb = mix(alb, vec3(0.02, 0.025, 0.03), 1.0 - smoothstep(0.022, 0.038, eyeD));
+        }
+        specStr = 0.24;
+      }
+
+      float sh = shadow9(vWPos);
+      float ca = caus(vWPos);
+      vec3 sunIrr = sunE(vWPos);
+      float ndl = max(dot(N, uSunDir), 0.0);
+      vec3 V = normalize(uCamPos - vWPos);
+      vec3 H = normalize(V + uSunDir);
+      float spec = pow(max(dot(N, H), 0.0), specPow) * specStr * sh;
+
+      vec3 lit = alb * (sunIrr * ndl * sh * (0.68 + 1.35 * ca) + amb(vWPos, N) * 1.15 + sideLight(vWPos, N)) + sunIrr * spec;
+      fragColor = vec4(fog(lit, vWPos), 1.0);
+    }
+  `;
+
+  const turtleShadowFs = /* glsl */ `
+    precision highp float;
+    layout(location = 0) out vec4 fragColor;
+    void main() { fragColor = vec4(1.0); }
+  `;
+
+  const turtleMat = bindSharedUniforms(new THREE.ShaderMaterial({
+    uniforms: sharedUniforms,
+    vertexShader: turtleVs,
+    fragmentShader: turtleFs,
+    glslVersion: THREE.GLSL3,
+    side: THREE.DoubleSide,
+  }), sharedUniforms);
+  const turtleShadowMat = bindSharedUniforms(new THREE.ShaderMaterial({
+    uniforms: sharedUniforms,
+    vertexShader: turtleVs,
+    fragmentShader: turtleShadowFs,
+    glslVersion: THREE.GLSL3,
+    side: THREE.DoubleSide,
+    colorWrite: false,
+  }), sharedUniforms);
+
+  const turtleMesh = new THREE.Mesh(turtleGeo, turtleMat);
+  turtleMesh.frustumCulled = false;
+  const turtleShadowMesh = new THREE.Mesh(turtleGeo, turtleShadowMat);
+  turtleShadowMesh.frustumCulled = false;
+  group.add(turtleMesh);
+  shadowGroup.add(turtleShadowMesh);
+
+  // ---- 5. 22 Bioluminescent Translucent Moon Jellyfish (Aurelia) ----
+  const jellyBaseGeo = buildJellyfishGeometry();
+  const jellyGeo = new THREE.InstancedBufferGeometry();
+  jellyGeo.index = jellyBaseGeo.index;
+  jellyGeo.attributes.position = jellyBaseGeo.attributes.position;
+  jellyGeo.attributes.normal = jellyBaseGeo.attributes.normal;
+  jellyGeo.attributes.aJMeta = jellyBaseGeo.attributes.aJMeta;
+
+  rseed(77209);
+  const jellyClusters = [
+    // Purple Grotto arch & twilight chamber (Vista 5)
+    { cx: 6.0, cy: -34.2, cz: 78.0, rx: 8.5, ry: 3.2, rz: 12.0, n: 9 },
+    // Blue Hole luminous shaft chamber (Vista 7)
+    { cx: 59.0, cy: -28.5, cz: 64.0, rx: 8.5, ry: 5.5, rz: 8.5, n: 7 },
+    // Sponge Canyon deep mystic drift (Vista 4)
+    { cx: -58.0, cy: -28.5, cz: -4.0, rx: 10.5, ry: 4.8, rz: 13.0, n: 6 },
+  ];
+  const jellyPosList = [];
+  for (const cl of jellyClusters) {
+    for (let k = 0; k < cl.n; k++) {
+      let placed = false;
+      for (let t = 0; t < 16; t++) {
+        const x = cl.cx + (rnd() - 0.5) * 2 * cl.rx;
+        const y = cl.cy + (rnd() - 0.5) * 2 * cl.ry;
+        const z = cl.cz + (rnd() - 0.5) * 2 * cl.rz;
+        if (terrain.dw(x, y, z) < -2.6 && y < -4.5) {
+          jellyPosList.push([x, y, z, 0.72 + rnd() * 0.62, rnd() * 6.283, 1.35 + rnd() * 0.65, rnd()]);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        jellyPosList.push([cl.cx, cl.cy, cl.cz, 0.9, rnd() * 6.283, 1.6, rnd()]);
+      }
+    }
+  }
+  const nJellies = jellyPosList.length;
+  jellyGeo.instanceCount = nJellies;
+  const jPosArr = new Float32Array(nJellies * 4);
+  const jMetaArr = new Float32Array(nJellies * 4);
+  for (let i = 0; i < nJellies; i++) {
+    const jp = jellyPosList[i];
+    jPosArr.set([jp[0], jp[1], jp[2], jp[3]], i * 4);
+    jMetaArr.set([jp[4], jp[5], jp[6], i / Math.max(1, nJellies)], i * 4);
+  }
+  jellyGeo.setAttribute('iJPos', new THREE.InstancedBufferAttribute(jPosArr, 4));
+  jellyGeo.setAttribute('iJMeta', new THREE.InstancedBufferAttribute(jMetaArr, 4));
+  jellyGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, -20, 0), 220);
+
+  const jellyVs = /* glsl */ `
+    attribute vec3 aJMeta; // x=part(0 bell, 1 oral, 2 tentacle), y=u(0..1), z=ang
+    attribute vec4 iJPos;  // xyz=anchor, w=scale
+    attribute vec4 iJMeta; // x=phase, y=freq, z=hueSeed, w=idxNorm
+    ${MEDIUM_GLSL}
+
+    out vec3 vWPos;
+    out vec3 vWNorm;
+    out vec3 vJMeta;
+    out float vHue;
+    out float vPulse;
+
+    void main() {
+      float ph = uTime * iJMeta.y + iJMeta.x;
+      float sc = iJPos.w;
+      float part = aJMeta.x;
+      float u = aJMeta.y;
+      float ang = aJMeta.z;
+
+      // Gentle buoyant drift + pulsing jet heave
+      vec3 drift = vec3(
+        sin(uTime * 0.22 + iJMeta.x * 2.1) * 1.45,
+        sin(uTime * 0.34 + iJMeta.x) * 0.95 + 0.22 * sin(ph - 0.8),
+        cos(uTime * 0.19 + iJMeta.x * 1.7) * 1.45
+      );
+      vec3 center = iJPos.xyz + drift;
+
+      vec3 lp = position;
+      float pulse = sin(ph);
+      if (part < 0.5) {
+        // Bell radial contraction wave propagating from apex -> scalloped rim
+        float wave = sin(ph - u * 1.65);
+        float expand = 1.0 + wave * 0.20 * pow(u, 1.15);
+        lp.xz *= expand;
+        lp.y *= 1.0 - wave * 0.14 * (1.0 - u * 0.4);
+      } else {
+        // Oral arms & trailing marginal tentacles: trailing sinusoidal fluid sway + diver wake push
+        float lag = part < 1.5 ? 1.8 : 2.6;
+        float swayAmp = (part < 1.5 ? 0.08 : 0.16) * pow(u, 1.25);
+        lp.x += sin(ph * 0.85 - u * lag + ang) * swayAmp;
+        lp.z += cos(ph * 0.78 - u * lag + ang * 1.3) * swayAmp;
+        lp.xz *= 1.0 + sin(ph - 1.5) * 0.14 * (1.0 - u * 0.6);
+      }
+
+      // Gentle tilt along horizontal drift velocity
+      float tiltX = cos(uTime * 0.22 + iJMeta.x * 2.1) * 0.16;
+      float tiltZ = -sin(uTime * 0.19 + iJMeta.x * 1.7) * 0.16;
+      lp.xz += vec2(tiltX, tiltZ) * lp.y;
+
+      vec3 wp = center + lp * sc;
+
+      // Subtle diver wake drift when swimming past jellyfish
+      vec3 toJ = wp - uCamPos;
+      float dCam = length(toJ);
+      if (dCam < 5.5 && part > 0.5) {
+        float wPush = smoothstep(5.5, 0.8, dCam) * u;
+        wp += (normalize(toJ + vec3(1e-4)) * 0.45 + uSwimmerVel * 0.14) * wPush;
+      }
+
+      vWPos = wp;
+      vWNorm = normalize(normal);
+      vJMeta = aJMeta;
+      vHue = iJMeta.z;
+      vPulse = 0.5 + 0.5 * pulse;
+      gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+    }
+  `;
+
+  const jellyFs = /* glsl */ `
+    precision highp float;
+    precision highp sampler3D;
+    ${MEDIUM_GLSL}
+    in vec3 vWPos;
+    in vec3 vWNorm;
+    in vec3 vJMeta;
+    in float vHue;
+    in float vPulse;
+    layout(location = 0) out vec4 fragColor;
+
+    void main() {
+      vec3 N = normalize(vWNorm);
+      if (!gl_FrontFacing) N = -N;
+      vec3 V = normalize(uCamPos - vWPos);
+      float fres = pow(1.0 - abs(dot(N, V)), 2.0);
+      float part = vJMeta.x;
+      float u = vJMeta.y;
+      float ang = vJMeta.z;
+
+      // Bioluminescent cyan-aqua, amethyst-violet, and rose-magenta palette
+      vec3 cAqua = vec3(0.24, 0.88, 1.00);
+      vec3 cViol = vec3(0.72, 0.34, 1.00);
+      vec3 cRose = vec3(1.00, 0.38, 0.78);
+      vec3 baseCol = mix(mix(cAqua, cViol, smoothstep(0.0, 0.6, vHue)), cRose, smoothstep(0.55, 1.0, vHue));
+
+      float glow = 0.0;
+      vec3 col = baseCol;
+      if (part < 0.5) {
+        // Translucent bell: glowing Fresnel rim + 4-leaf clover gonad rings near apex
+        float gonad = exp(-pow((u - 0.34) * 7.5, 2.0)) * (0.45 + 0.55 * pow(0.5 + 0.5 * cos(ang * 4.0), 2.0));
+        float rimGlow = smoothstep(0.62, 1.0, u) * 0.75;
+        float pulseFlash = 0.78 + 0.35 * vPulse;
+        col = mix(baseCol, vec3(1.0, 0.78, 0.94), gonad * 0.75);
+        glow = (0.14 + fres * 0.88 + rimGlow * 0.55 + gonad * 0.78) * pulseFlash;
+      } else if (part < 1.5) {
+        // Ruffled oral arms: warm luminous core fading gently toward tips
+        col = mix(baseCol * 1.15, vec3(1.0, 0.62, 0.88), 0.42);
+        glow = (0.42 + 0.38 * fres) * (1.0 - u * 0.65);
+      } else {
+        // Delicate trailing marginal tentacles
+        col = mix(baseCol, vec3(0.82, 0.95, 1.0), 0.35);
+        glow = 0.36 * (1.0 - u * 0.78);
+      }
+
+      // Attenuate cleanly with underwater distance fog so distant jellies dissolve naturally
+      float dist = length(vWPos - uCamPos);
+      float atten = exp(-dist * 0.028) * smoothstep(95.0, 18.0, dist);
+      vec3 outCol = col * glow * atten * 0.78;
+      fragColor = vec4(outCol, clamp(glow * atten * 0.85, 0.0, 0.92));
+    }
+  `;
+
+  const jellyMat = bindSharedUniforms(new THREE.ShaderMaterial({
+    uniforms: sharedUniforms,
+    vertexShader: jellyVs,
+    fragmentShader: jellyFs,
+    glslVersion: THREE.GLSL3,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  }), sharedUniforms);
+  const jellyMesh = new THREE.Mesh(jellyGeo, jellyMat);
+  jellyMesh.frustumCulled = false;
+  jellyMesh.renderOrder = 14;
+  group.add(jellyMesh);
+
+  // ---- 6. ~115 Shy Spotted Garden Eels (Heteroconger hassi) with Burrow Retraction ----
+  const eelBaseGeo = buildGardenEelGeometry();
+  const eelGeo = new THREE.InstancedBufferGeometry();
+  eelGeo.index = eelBaseGeo.index;
+  eelGeo.attributes.position = eelBaseGeo.attributes.position;
+  eelGeo.attributes.normal = eelBaseGeo.attributes.normal;
+  eelGeo.attributes.aEelT = eelBaseGeo.attributes.aEelT;
+
+  rseed(91537);
+  const eelColonies = [
+    { cx: 2.0, cz: -6.0, r: 9.5, n: 34 },     // Main Coral Canyon sandy floor (Vista 1 & 2)
+    { cx: 54.0, cz: 18.0, r: 8.5, n: 28 },    // Shipwreck Cove sunlit sand (Vista 3)
+    { cx: 6.0, cz: 70.0, r: 7.0, n: 26 },     // Purple Grotto sunlit sand approach (Vista 5)
+    { cx: 62.5, cz: -30.5, r: 8.5, n: 28 },   // Fighter Wreck sandy apron (Vista 8)
+  ];
+  const eelPosList = [];
+  const eGrad = new THREE.Vector3();
+  for (const col of eelColonies) {
+    let count = 0;
+    for (let tries = 0; tries < col.n * 10 && count < col.n; tries++) {
+      const ang = rnd() * Math.PI * 2;
+      const rad = Math.sqrt(rnd()) * col.r;
+      const x = col.cx + Math.cos(ang) * rad;
+      const z = col.cz + Math.sin(ang) * rad;
+      // Keep Fighter Wreck fuselage/wing bed clear
+      if (Math.hypot(x - 71.0, z + 25.0) < 9.2) continue;
+      const y = terrain.gy(x, z);
+      if (y > -12.0 || y < -46.5) continue;
+      if (Math.abs(terrain.dw(x, y, z)) > 0.35) continue;
+      terrain.grad(x, y, z, eGrad);
+      // Only colonize open sandy seafloor (upward normal > 0.72)
+      if (eGrad.y < 0.72) continue;
+      eelPosList.push([x, y - 0.03, z, 0.82 + rnd() * 0.38, rnd() * 6.283, rnd()]);
+      count++;
+    }
+  }
+  const nGardenEels = eelPosList.length;
+  eelGeo.instanceCount = nGardenEels;
+  const ePosArr = new Float32Array(nGardenEels * 4);
+  const eMetaArr = new Float32Array(nGardenEels * 4);
+  for (let i = 0; i < nGardenEels; i++) {
+    const ep = eelPosList[i];
+    ePosArr.set([ep[0], ep[1], ep[2], ep[3]], i * 4);
+    eMetaArr.set([ep[4], ep[5], 0.0, 0.0], i * 4);
+  }
+  eelGeo.setAttribute('iEelPos', new THREE.InstancedBufferAttribute(ePosArr, 4));
+  eelGeo.setAttribute('iEelMeta', new THREE.InstancedBufferAttribute(eMetaArr, 4));
+  eelGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, -30, 0), 220);
+
+  const eelVs = /* glsl */ `
+    attribute float aEelT;
+    attribute vec4 iEelPos;  // xyz=sand burrow root, w=scale
+    attribute vec4 iEelMeta; // x=yaw/phase, y=seed
+    ${MEDIUM_GLSL}
+
+    out vec3 vWPos;
+    out vec3 vWNorm;
+    out float vEelT;
+    out float vLocalY;
+    flat out float vSeed;
+
+    void main() {
+      vec3 root = iEelPos.xyz;
+      float sc = iEelPos.w;
+      float ph = iEelMeta.x;
+      float seed = iEelMeta.y;
+
+      // Shy proximity trigger: smoothly retract down into sand burrow when Diver, Shark, or Whale nears
+      float dMin = distance(root, uCamPos);
+      if (uSharkWake.w > 0.1) dMin = min(dMin, distance(root, uSharkWake.xyz) * 0.85);
+      if (uWhaleBody0.w > 0.1) dMin = min(dMin, distance(root, uWhaleBody0.xyz) * 0.72);
+      float emerge = smoothstep(2.5, 7.6, dMin);
+
+      // Current-facing orientation + gentle S-curve plankton-feeding sway
+      float yaw = 0.55 + (seed - 0.5) * 0.65;
+      float cy = cos(yaw);
+      float sy = sin(yaw);
+
+      vec3 lp = position * sc;
+      float flex = aEelT * aEelT;
+      float swayX = sin(uTime * 1.45 + ph + aEelT * 2.4) * 0.085 * flex * emerge;
+      float swayZ = cos(uTime * 1.15 + ph * 1.3 + aEelT * 2.1) * 0.065 * flex * emerge;
+      // Subtle plankton-pecking head nod when safely emerged
+      float peck = sin(uTime * 2.4 + seed * 37.0) * 0.025 * smoothstep(0.65, 1.0, aEelT) * emerge;
+      lp.x += swayX;
+      lp.z += swayZ + peck;
+
+      // Retract vertically down into sand burrow (up to 0.82m below floor)
+      float burrowDrop = (1.0 - emerge) * (0.82 * sc);
+      lp.y -= burrowDrop;
+
+      vec3 rotP = vec3(lp.x * cy - lp.z * sy, lp.y, lp.x * sy + lp.z * cy);
+      vec3 rotN = normalize(vec3(normal.x * cy - normal.z * sy, normal.y, normal.x * sy + normal.z * cy));
+      vec3 wp = root + rotP;
+
+      vWPos = wp;
+      vWNorm = rotN;
+      vEelT = aEelT;
+      vLocalY = lp.y;
+      vSeed = seed;
+      gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+    }
+  `;
+
+  const eelFs = /* glsl */ `
+    precision highp float;
+    precision highp sampler3D;
+    ${MEDIUM_GLSL}
+    in vec3 vWPos;
+    in vec3 vWNorm;
+    in float vEelT;
+    in float vLocalY;
+    flat in float vSeed;
+    layout(location = 0) out vec4 fragColor;
+
+    float eelNoise3(vec3 p) {
+      vec3 i = floor(p);
+      vec3 f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      float n = dot(i, vec3(1.0, 57.0, 113.0));
+      return mix(
+        mix(mix(fract(sin(n) * 43758.5), fract(sin(n + 1.0) * 43758.5), f.x),
+            mix(fract(sin(n + 57.0) * 43758.5), fract(sin(n + 58.0) * 43758.5), f.x), f.y),
+        mix(mix(fract(sin(n + 113.0) * 43758.5), fract(sin(n + 114.0) * 43758.5), f.x),
+            mix(fract(sin(n + 170.0) * 43758.5), fract(sin(n + 171.0) * 43758.5), f.x), f.y),
+        f.z
+      );
+    }
+
+    void main() {
+      // Clip cleanly at the sand burrow entrance so retracted eel segments vanish below sand
+      if (vLocalY < -0.02) discard;
+
+      vec3 N = normalize(vWNorm);
+      if (!gl_FrontFacing) N = -N;
+      vec3 V = normalize(uCamPos - vWPos);
+
+      // Spotted Garden Eel (Heteroconger hassi): ivory-silver body speckled with dark slate dots & 2 larger blotches
+      float speck = smoothstep(0.56, 0.72, eelNoise3(vec3(vWPos.xz * 26.0, vEelT * 34.0 + vSeed * 19.0)));
+      float blotch1 = exp(-pow((vEelT - 0.52) * 18.0, 2.0));
+      float blotch2 = exp(-pow((vEelT - 0.78) * 20.0, 2.0));
+      vec3 alb = mix(vec3(0.76, 0.75, 0.69), vec3(0.14, 0.15, 0.16), speck * 0.78);
+      alb = mix(alb, vec3(0.06, 0.06, 0.07), clamp((blotch1 + blotch2) * 0.85, 0.0, 0.88));
+      // Subtle dark eye ring near tip
+      float eyeBand = smoothstep(0.91, 0.96, vEelT) * (1.0 - smoothstep(0.96, 0.99, vEelT));
+      alb = mix(alb, vec3(0.03, 0.035, 0.04), eyeBand * 0.65);
+
+      float sh = shadow1(vWPos);
+      float ca = caus(vWPos);
+      vec3 E = sunE(vWPos) * sh;
+      vec3 lit = alb * (E * (0.28 + 0.75 * sat(dot(N, uSunDir))) * (0.72 + 0.95 * ca) + amb(vWPos, N) * 1.2 + sideLight(vWPos, N));
+      lit += E * pow(sat(dot(N, normalize(V + uSunDir))), 24.0) * 0.25;
+      fragColor = vec4(fog(lit, vWPos), 1.0);
+    }
+  `;
+
+  const eelMat = bindSharedUniforms(new THREE.ShaderMaterial({
+    uniforms: sharedUniforms,
+    vertexShader: eelVs,
+    fragmentShader: eelFs,
+    glslVersion: THREE.GLSL3,
+    side: THREE.DoubleSide,
+  }), sharedUniforms);
+  const eelMesh = new THREE.Mesh(eelGeo, eelMat);
+  eelMesh.frustumCulled = false;
+  group.add(eelMesh);
+
   const nSeabirds = 48;
   const seabirdMesh = buildSeabirds(sharedUniforms, nSeabirds);
   group.add(seabirdMesh);
@@ -3014,6 +4201,14 @@ export function compileMarineLife(terrain, sharedUniforms) {
   return {
     group,
     shadowGroup,
-    stats: { mantas: nMantas, fish: totalFish, seabirds: nSeabirds },
+    stats: {
+      mantas: nMantas,
+      fish: totalFish,
+      clownfish: nClownfish,
+      turtles: nTurtles,
+      jellyfish: nJellies,
+      gardenEels: nGardenEels,
+      seabirds: nSeabirds,
+    },
   };
 }

@@ -8,23 +8,38 @@ import {
   createWaterCausticSystem,
 } from './env/medium.js';
 import {
-  buildTerrain,
+  buildTerrainAsync,
   createSolidMaterial,
   createSolidShadowMaterial,
 } from './env/terrain.js';
-import { DeformableSandSystem } from './env/deformable-sand.js';
-import { compileWorldEcology } from './coral-system.js';
-import { createSharkRig, createWhalePodRig, compileMarineLife } from './shark-system.js';
-import { SpectralOceanSystem } from './ocean/ocean-system.js';
-import {
-  createAbyssalSurfaceMaterial,
-  createAbyssalBackdropMaterial,
-} from './ocean/stylized-ocean-material.js';
-import {
-  InteractiveWaterHeightfield,
-  DifferentialCausticsPass,
-} from './ocean/water-optics.js';
-import { OceanAudioSystem } from './audio/ocean-audio.js';
+
+// ============================================================================
+// Boot Loader UI Helpers (Non-Blocking Web Worker + Chunked Startup)
+// ============================================================================
+const bootLoaderEl = document.getElementById('boot-loader');
+const bootBarEl = document.getElementById('boot-bar');
+const bootPctEl = document.getElementById('boot-pct');
+const bootStatusEl = document.getElementById('boot-status');
+let _lastBootPct = 0;
+
+function setBootProgress(pct, label) {
+  const clamped = Math.max(_lastBootPct, Math.min(100, Math.round(pct)));
+  _lastBootPct = clamped;
+  if (bootBarEl) bootBarEl.style.width = `${clamped}%`;
+  if (bootPctEl) bootPctEl.textContent = `${clamped}%`;
+  if (bootStatusEl && label) bootStatusEl.textContent = label;
+}
+
+function finishBootLoader() {
+  setBootProgress(100, '深海生態就緒 · 進入海域');
+  if (bootLoaderEl) {
+    requestAnimationFrame(() => {
+      bootLoaderEl.classList.add('loaded');
+    });
+  }
+}
+
+const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
 
 // ============================================================================
 // Renderer, Camera & Scene Boot
@@ -66,7 +81,7 @@ passQuad.frustumCulled = false;
 passScene.add(passQuad);
 
 // ============================================================================
-// Shared Abyssal Medium, Terrain, Ecology, Shark, Marine Life & FFT Ocean
+// Shared Abyssal Medium & Async Runtime Subsystems (populated in boot())
 // ============================================================================
 const sharedUniforms = createSharedUniforms();
 sharedUniforms.uSunDir.value.copy(SUN_DIR);
@@ -76,131 +91,20 @@ sharedUniforms.uDetailTex.value = createDetailTexture(renderer);
 const waterCaustics = createWaterCausticSystem(renderer);
 sharedUniforms.uWaterTex.value = waterCaustics.texture;
 
-const terrain = buildTerrain();
-sharedUniforms.uVolTex.value = terrain.volTex;
-sharedUniforms.uZoneMapTex.value = terrain.zoneMapTex;
-
-const deformableSand = new DeformableSandSystem(renderer, sharedUniforms, {
-  resolution: isMobileDevice ? 256 : 512,
-  worldSize: 44.0,
-});
-sharedUniforms.uSandBedTex.value = deformableSand.texture;
-sharedUniforms.uSandLightTex.value = deformableSand.lightTexture;
-sharedUniforms.uSandSize.value = deformableSand.worldSize;
-scene.add(deformableSand.grainMesh);
-
-const terrainMat = createSolidMaterial(sharedUniforms, { instanced: false });
-const skirtMat = createSolidMaterial(sharedUniforms, { instanced: false, isSkirt: true });
-const terrainShadowMat = createSolidShadowMaterial({ instanced: false, sharedUniforms });
-
-const terrainMesh = new THREE.Mesh(terrain.geometry, terrainMat);
-terrainMesh.frustumCulled = false;
-scene.add(terrainMesh);
-
-const skirtMesh = new THREE.Mesh(terrain.skirtGeometry, skirtMat);
-skirtMesh.frustumCulled = false;
-scene.add(skirtMesh);
-
-const terrainShadowMesh = new THREE.Mesh(terrain.geometry, terrainShadowMat);
-terrainShadowMesh.frustumCulled = false;
-shadowScene.add(terrainShadowMesh);
-
-const ecology = compileWorldEcology(terrain, sharedUniforms, { isMobile: isMobileDevice });
-scene.add(ecology.group);
-shadowScene.add(ecology.shadowGroup);
-
-const sharkRig = createSharkRig(terrain, sharedUniforms);
-scene.add(sharkRig.sharkMesh);
-shadowScene.add(sharkRig.sharkShadowMesh);
-
-const whalePod = createWhalePodRig(terrain, sharedUniforms);
-scene.add(whalePod.motherMesh);
-scene.add(whalePod.calfMesh);
-oceanScene.add(whalePod.effectsMesh);
-shadowScene.add(whalePod.motherShadowMesh);
-shadowScene.add(whalePod.calfShadowMesh);
-
-const marineLife = compileMarineLife(terrain, sharedUniforms);
-scene.add(marineLife.group);
-shadowScene.add(marineLife.shadowGroup);
-
-// Seamless Sky & Underwater Abyss Sphere
-const backdropMesh = new THREE.Mesh(
-  new THREE.SphereGeometry(420, 48, 32),
-  createAbyssalBackdropMaterial(sharedUniforms, MEDIUM_GLSL)
-);
-backdropMesh.frustumCulled = false;
-scene.add(backdropMesh);
-
-// GPU FFT Spectral Ocean Surface — Tuned for a calm, sunny tropical diving day (適合潛水的晴天)
-const patchLengths = [180, 28, 6];
-const oceanSystem = new SpectralOceanSystem(renderer, {
-  resolution: isMobileDevice ? 128 : 256,
-  patchLengths,
-  boundaryFactor: 6,
-  gravity: 9.81,
-  depth: 500,
-  amplitude: 0.18,
-  choppiness: 0.52,
-  foamRecovery: 0.85,
-  seed: 7,
-  local: {
-    scale: 0.52,
-    windSpeed: 3.6,
-    directionDegrees: 42,
-    fetchMeters: 45000,
-    directionality: 0.82,
-    swell: 0.35,
-    peakEnhancement: 3.3,
-    shortWaveFade: 0.015,
-  },
-  swell: {
-    scale: 0.38,
-    windSpeed: 1.8,
-    directionDegrees: 68,
-    fetchMeters: 160000,
-    directionality: 0.92,
-    swell: 0.95,
-    peakEnhancement: 3.3,
-    shortWaveFade: 0.01,
-  },
-});
-
-const waterHeightfield = new InteractiveWaterHeightfield(renderer, {
-  resolution: isMobileDevice ? 128 : 256,
-  worldSize: 96.0,
-  damping: 0.9962,
-  waveSpeed: 1.45,
-});
-sharedUniforms.uRippleTex.value = waterHeightfield.texture;
-sharedUniforms.uRippleSize.value = waterHeightfield.worldSize;
-
-const differentialCaustics = new DifferentialCausticsPass(
-  renderer,
-  isMobileDevice ? 256 : 512,
-  isMobileDevice ? 96 : 192
-);
-sharedUniforms.uCausticTex.value = differentialCaustics.texture;
-
-const abyssalOceanMat = createAbyssalSurfaceMaterial(sharedUniforms, MEDIUM_GLSL, patchLengths);
-// Provide 1x1 white fallback while foam.webp loads
-const foamFallback = new THREE.DataTexture(new Uint8Array([180, 180, 180, 255]), 1, 1);
-foamFallback.needsUpdate = true;
-abyssalOceanMat.uniforms.uFoamTexture.value = foamFallback;
-new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}assets/stylized-above-below-ocean/foam.webp`, (tex) => {
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.NoColorSpace;
-  abyssalOceanMat.uniforms.uFoamTexture.value = tex;
-});
-
-const oceanSegs = isMobileDevice ? 200 : 512;
-const oceanGeo = new THREE.PlaneGeometry(760, 760, oceanSegs, oceanSegs);
-oceanGeo.rotateX(-Math.PI * 0.5);
-const oceanMesh = new THREE.Mesh(oceanGeo, abyssalOceanMat);
-oceanMesh.frustumCulled = false;
-oceanMesh.renderOrder = -10;
-oceanScene.add(oceanMesh);
+let terrain = null;
+let deformableSand = null;
+let ecology = null;
+let sharkRig = null;
+let whalePod = null;
+let marineLife = null;
+let oceanSystem = null;
+let waterHeightfield = null;
+let differentialCaustics = null;
+let abyssalOceanMat = null;
+let backdropMesh = null;
+let oceanMesh = null;
+let oceanAudio = null;
+let bootReady = false;
 
 // ============================================================================
 // Multi-Pass Render Targets (Shadow 2048, Refract HDR, Scene HDR, Half-Res Rays, 4-Mip Bloom)
@@ -706,24 +610,25 @@ function buildLookPose(px, yOff, pz, tx, ty, tz, absoluteY = false) {
   return { pos: [p.x, p.y, p.z], yaw, pitch };
 }
 
-const fighterWreckY = terrain.gy(71.0, -25.0) + 0.52;
+let VIEWPOINTS = [];
 
-const VIEWPOINTS = [
-  { name: 'Main Canyon & 1:1 Whales', ...buildLookPose(12.5, -18.5, 14.0, -5.0, -19.5, -10.5, true) },
-  { name: 'Abyssal Canyon & Fluke', ...buildLookPose(0.8, 2.2, -11.5, -0.5, -45.2, -6.8) },
-  { name: 'Sunken Shipwreck', ...buildLookPose(56.0, -20.5, 27.0, 58.8, -22.5, 6.0, true) },
-  { name: 'Sponge Canyon', ...buildLookPose(-55.0, 2.2, -18.0, -60.0, -30.0, 8.0) },
-  { name: 'Purple Grotto', ...buildLookPose(4.5, -36.8, 62.0, 6.0, -35.8, 94.0, true) },
-  { name: 'Sunny Spectral Surface', ...buildLookPose(-14.5, 6.2, 23.0, 0.5, -0.5, -6.0, true) },
-  { name: 'Blue Hole God Rays', ...buildLookPose(47.8, -39.2, 71.2, 62.5, -24.5, 62.0, true) },
-  { name: 'WWII Fighter Wreck', ...buildLookPose(61.5, fighterWreckY + 4.8, -32.2, 71.0, fighterWreckY + 0.1, -25.0, true) },
-  { name: 'Giant Sea Fan Drop-Off', ...buildLookPose(-18.6, -21.8, 12.0, -22.2, -18.0, 19.2, true) },
-];
+function initViewpoints() {
+  const fighterWreckY = terrain.gy(71.0, -25.0) + 0.52;
+  VIEWPOINTS = [
+    { name: 'Main Canyon & 1:1 Whales', ...buildLookPose(12.5, -18.5, 14.0, -5.0, -19.5, -10.5, true) },
+    { name: 'Abyssal Canyon & Fluke', ...buildLookPose(0.8, 2.2, -11.5, -0.5, -45.2, -6.8) },
+    { name: 'Sunken Shipwreck', ...buildLookPose(56.0, -20.5, 27.0, 58.8, -22.5, 6.0, true) },
+    { name: 'Sponge Canyon', ...buildLookPose(-55.0, 2.2, -18.0, -60.0, -30.0, 8.0) },
+    { name: 'Purple Grotto', ...buildLookPose(4.5, -36.8, 62.0, 6.0, -35.8, 94.0, true) },
+    { name: 'Sunny Spectral Surface', ...buildLookPose(-14.5, 6.2, 23.0, 0.5, -0.5, -6.0, true) },
+    { name: 'Blue Hole God Rays', ...buildLookPose(47.8, -39.2, 71.2, 62.5, -24.5, 62.0, true) },
+    { name: 'WWII Fighter Wreck', ...buildLookPose(61.5, fighterWreckY + 4.8, -32.2, 71.0, fighterWreckY + 0.1, -25.0, true) },
+    { name: 'Giant Sea Fan Drop-Off', ...buildLookPose(-18.6, -21.8, 12.0, -22.2, -18.0, 19.2, true) },
+  ];
+}
 
-let yaw = VIEWPOINTS[0].yaw;
-let pitch = VIEWPOINTS[0].pitch;
-camera.position.set(...VIEWPOINTS[0].pos);
-camera.rotation.set(pitch, yaw, 0, 'YXZ');
+let yaw = 0;
+let pitch = 0;
 
 const keys = new Set();
 let isDragging = false;
@@ -739,10 +644,8 @@ const zoneValEl = document.getElementById('zone-val');
 const audioBtnEl = document.getElementById('audio-btn');
 const audioValEl = document.getElementById('audio-val');
 
-const oceanAudio = new OceanAudioSystem();
-
 function updateAudioBadge() {
-  if (!audioValEl || !audioBtnEl) return;
+  if (!audioValEl || !audioBtnEl || !oceanAudio) return;
   if (oceanAudio.muted) {
     audioValEl.textContent = '🔇 靜音 (M)';
     audioBtnEl.classList.add('muted');
@@ -754,6 +657,7 @@ function updateAudioBadge() {
 }
 
 function unlockAudio() {
+  if (!oceanAudio) return;
   oceanAudio.init();
   oceanAudio.resume();
   updateAudioBadge();
@@ -762,6 +666,7 @@ function unlockAudio() {
 if (audioBtnEl) {
   audioBtnEl.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (!oceanAudio) return;
     oceanAudio.toggleMute();
     updateAudioBadge();
   });
@@ -770,11 +675,12 @@ window.addEventListener('pointerdown', unlockAudio, { passive: true });
 window.addEventListener('touchstart', unlockAudio, { passive: true });
 
 function setViewpoint(index, instant = false) {
+  if (!VIEWPOINTS.length || !terrain) return;
   const vp = VIEWPOINTS[Math.max(0, Math.min(VIEWPOINTS.length - 1, index))];
   activeVp = index;
   vpButtons.forEach((btn, idx) => btn.classList.toggle('active', idx === index));
 
-  if (!instant) {
+  if (!instant && whalePod) {
     if (index === 5) whalePod.controller.cueSurfaceEncounter();
     else if (index === 0) whalePod.controller.cueCanyonEncounter();
   }
@@ -798,7 +704,6 @@ function setViewpoint(index, instant = false) {
     };
   }
 }
-setViewpoint(0, true);
 
 vpButtons.forEach((btn, idx) => {
   btn.addEventListener('click', (e) => {
@@ -812,6 +717,7 @@ const _pointerRaycaster = new THREE.Raycaster();
 const _pointerNdc = new THREE.Vector2();
 
 function triggerWaterDropAtEvent(e, strength = 0.095) {
+  if (!bootReady || !terrain || !waterHeightfield || !deformableSand) return false;
   const rect = renderer.domElement.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return false;
   if (document.pointerLockElement === renderer.domElement) {
@@ -1173,7 +1079,7 @@ window.addEventListener('blur', () => {
 window.addEventListener('keydown', (e) => {
   keys.add(e.code);
   unlockAudio();
-  if (e.code === 'KeyM') {
+  if (e.code === 'KeyM' && oceanAudio) {
     oceanAudio.toggleMute();
     updateAudioBadge();
   }
@@ -1465,7 +1371,7 @@ function animate() {
   oceanSystem.update(elapsed, dt);
   waterCaustics.update(elapsed);
   sharkRig.controller.update(dt);
-  whalePod.controller.update(dt);
+  whalePod.controller.update(dt, camera.position);
   waterHeightfield.update(dt, camera.position, whalePod);
   deformableSand.update(dt, elapsed, camera.position, terrain, sharkRig, whalePod);
   differentialCaustics.update(oceanSystem, SUN_DIR);
@@ -1529,4 +1435,193 @@ function animate() {
   renderPass(postMat, null);
 }
 
-animate();
+// ============================================================================
+// Non-Blocking Async Boot (Web Worker Terrain + Parallel Dynamic Chunk Imports)
+// ============================================================================
+async function boot() {
+  try {
+    setBootProgress(6, '啟動背景 Worker 地形烘焙與模組分塊載入...');
+    await nextFrame();
+
+    const [
+      builtTerrain,
+      sandMod,
+      ecologyMod,
+      wildlifeMod,
+      oceanSysMod,
+      oceanMatMod,
+      opticsMod,
+      audioMod,
+    ] = await Promise.all([
+      buildTerrainAsync((pct, label) => {
+        setBootProgress(6 + pct * 0.78, label);
+      }),
+      import('./env/deformable-sand.js'),
+      import('./coral-system.js'),
+      import('./shark-system.js'),
+      import('./ocean/ocean-system.js'),
+      import('./ocean/stylized-ocean-material.js'),
+      import('./ocean/water-optics.js'),
+      import('./audio/ocean-audio.js'),
+    ]);
+
+    terrain = builtTerrain;
+    sharedUniforms.uVolTex.value = terrain.volTex;
+    sharedUniforms.uZoneMapTex.value = terrain.zoneMapTex;
+
+    setBootProgress(86, '建立海底峽谷網格與動態細沙系統...');
+    await nextFrame();
+
+    const { DeformableSandSystem } = sandMod;
+    deformableSand = new DeformableSandSystem(renderer, sharedUniforms, {
+      resolution: isMobileDevice ? 256 : 512,
+      worldSize: 44.0,
+    });
+    sharedUniforms.uSandBedTex.value = deformableSand.texture;
+    sharedUniforms.uSandLightTex.value = deformableSand.lightTexture;
+    sharedUniforms.uSandSize.value = deformableSand.worldSize;
+    scene.add(deformableSand.grainMesh);
+
+    const terrainMat = createSolidMaterial(sharedUniforms, { instanced: false });
+    const skirtMat = createSolidMaterial(sharedUniforms, { instanced: false, isSkirt: true });
+    const terrainShadowMat = createSolidShadowMaterial({ instanced: false, sharedUniforms });
+
+    const terrainMesh = new THREE.Mesh(terrain.geometry, terrainMat);
+    terrainMesh.frustumCulled = false;
+    scene.add(terrainMesh);
+
+    const skirtMesh = new THREE.Mesh(terrain.skirtGeometry, skirtMat);
+    skirtMesh.frustumCulled = false;
+    scene.add(skirtMesh);
+
+    const terrainShadowMesh = new THREE.Mesh(terrain.geometry, terrainShadowMat);
+    terrainShadowMesh.frustumCulled = false;
+    shadowScene.add(terrainShadowMesh);
+
+    initViewpoints();
+    setViewpoint(0, true);
+
+    setBootProgress(90, '生成珊瑚礁群、戰機殘骸、硨磲貝與海草物理...');
+    await nextFrame();
+
+    const { compileWorldEcology } = ecologyMod;
+    ecology = compileWorldEcology(terrain, sharedUniforms, { isMobile: isMobileDevice });
+    scene.add(ecology.group);
+    shadowScene.add(ecology.shadowGroup);
+
+    setBootProgress(94, '部署抹香鯨母子、海龜、小丑魚、花園鰻與發光水母...');
+    await nextFrame();
+
+    const { createSharkRig, createWhalePodRig, compileMarineLife } = wildlifeMod;
+    sharkRig = createSharkRig(terrain, sharedUniforms);
+    scene.add(sharkRig.sharkMesh);
+    shadowScene.add(sharkRig.sharkShadowMesh);
+
+    whalePod = createWhalePodRig(terrain, sharedUniforms);
+    scene.add(whalePod.motherMesh);
+    scene.add(whalePod.calfMesh);
+    oceanScene.add(whalePod.effectsMesh);
+    shadowScene.add(whalePod.motherShadowMesh);
+    shadowScene.add(whalePod.calfShadowMesh);
+
+    marineLife = compileMarineLife(terrain, sharedUniforms, ecology.anemoneAnchors);
+    scene.add(marineLife.group);
+    shadowScene.add(marineLife.shadowGroup);
+
+    setBootProgress(97, '編譯 FFT 海浪光譜與光學焦散...');
+    await nextFrame();
+
+    const { SpectralOceanSystem } = oceanSysMod;
+    const { createAbyssalSurfaceMaterial, createAbyssalBackdropMaterial } = oceanMatMod;
+    const { InteractiveWaterHeightfield, DifferentialCausticsPass } = opticsMod;
+    const { OceanAudioSystem } = audioMod;
+
+    backdropMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(420, 48, 32),
+      createAbyssalBackdropMaterial(sharedUniforms, MEDIUM_GLSL)
+    );
+    backdropMesh.frustumCulled = false;
+    scene.add(backdropMesh);
+
+    const patchLengths = [180, 28, 6];
+    oceanSystem = new SpectralOceanSystem(renderer, {
+      resolution: isMobileDevice ? 128 : 256,
+      patchLengths,
+      boundaryFactor: 6,
+      gravity: 9.81,
+      depth: 500,
+      amplitude: 0.18,
+      choppiness: 0.52,
+      foamRecovery: 0.85,
+      seed: 7,
+      local: {
+        scale: 0.52,
+        windSpeed: 3.6,
+        directionDegrees: 42,
+        fetchMeters: 45000,
+        directionality: 0.82,
+        swell: 0.35,
+        peakEnhancement: 3.3,
+        shortWaveFade: 0.015,
+      },
+      swell: {
+        scale: 0.38,
+        windSpeed: 1.8,
+        directionDegrees: 68,
+        fetchMeters: 160000,
+        directionality: 0.92,
+        swell: 0.95,
+        peakEnhancement: 3.3,
+        shortWaveFade: 0.01,
+      },
+    });
+
+    waterHeightfield = new InteractiveWaterHeightfield(renderer, {
+      resolution: isMobileDevice ? 128 : 256,
+      worldSize: 96.0,
+      damping: 0.9962,
+      waveSpeed: 1.45,
+    });
+    sharedUniforms.uRippleTex.value = waterHeightfield.texture;
+    sharedUniforms.uRippleSize.value = waterHeightfield.worldSize;
+
+    differentialCaustics = new DifferentialCausticsPass(
+      renderer,
+      isMobileDevice ? 256 : 512,
+      isMobileDevice ? 96 : 192
+    );
+    sharedUniforms.uCausticTex.value = differentialCaustics.texture;
+
+    abyssalOceanMat = createAbyssalSurfaceMaterial(sharedUniforms, MEDIUM_GLSL, patchLengths);
+    const foamFallback = new THREE.DataTexture(new Uint8Array([180, 180, 180, 255]), 1, 1);
+    foamFallback.needsUpdate = true;
+    abyssalOceanMat.uniforms.uFoamTexture.value = foamFallback;
+    new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}assets/stylized-above-below-ocean/foam.webp`, (tex) => {
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.colorSpace = THREE.NoColorSpace;
+      abyssalOceanMat.uniforms.uFoamTexture.value = tex;
+    });
+
+    const oceanSegs = isMobileDevice ? 200 : 512;
+    const oceanGeo = new THREE.PlaneGeometry(760, 760, oceanSegs, oceanSegs);
+    oceanGeo.rotateX(-Math.PI * 0.5);
+    oceanMesh = new THREE.Mesh(oceanGeo, abyssalOceanMat);
+    oceanMesh.frustumCulled = false;
+    oceanMesh.renderOrder = -10;
+    oceanScene.add(oceanMesh);
+
+    oceanAudio = new OceanAudioSystem();
+    updateAudioBadge();
+
+    bootReady = true;
+    _clock.getDelta(); // Reset clock delta after async boot so frame 1 dt is tiny
+    animate();
+    finishBootLoader();
+  } catch (err) {
+    console.error('Abyssal Reef boot failed:', err);
+    if (bootStatusEl) bootStatusEl.textContent = `載入發生錯誤：${err?.message || err}`;
+  }
+}
+
+boot();

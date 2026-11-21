@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { DEFORMABLE_SAND_GLSL } from './deformable-sand.js';
+import { WORLD_BOUNDS } from './world-bounds.js';
+
+export { WORLD_BOUNDS };
 
 // ============================================================================
 // Shared Underwater Optical Medium ("Design Tokens")
@@ -8,19 +11,6 @@ import { DEFORMABLE_SAND_GLSL } from './deformable-sand.js';
 
 export const SUN_DIR = new THREE.Vector3(0.32, 0.91, -0.26).normalize();
 export const AIR_SUN_DIR = new THREE.Vector3(-0.42, 0.44, -0.79).normalize();
-
-export const WORLD_BOUNDS = {
-  NX: 192,
-  NY: 48,
-  NZ: 192,
-  VS: 1.25,
-  OX: -120,
-  OY: -52,
-  OZ: -120,
-  SIZE_X: 240,
-  SIZE_Y: 60,
-  SIZE_Z: 240,
-};
 
 export function createSharedUniforms() {
   return {

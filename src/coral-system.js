@@ -999,6 +999,104 @@ function meshGiantFan() {
   return m.build();
 }
 
+// 15. Fractured Coral Rubble & Limestone Reef Shards (breaks up close-range voxel rock transitions)
+function meshCoralRubble() {
+  const m = new ProcMesh();
+  rseed(33107);
+  // Cluster of 3 angular limestone shards + 1 dead staghorn branch stub
+  const shards = [
+    { ox: 0.0, oz: 0.0, rx: 0.42, ry: 0.14, rz: 0.28, yaw: 0.2 },
+    { ox: 0.34, oz: 0.22, rx: 0.26, ry: 0.11, rz: 0.22, yaw: 1.5 },
+    { ox: -0.28, oz: 0.18, rx: 0.22, ry: 0.09, rz: 0.30, yaw: -0.8 },
+  ];
+  for (let si = 0; si < shards.length; si++) {
+    const s = shards[si];
+    const cs = Math.cos(s.yaw);
+    const sn = Math.sin(s.yaw);
+    const base = [];
+    const top = [];
+    const nSides = 6;
+    for (let k = 0; k < nSides; k++) {
+      const a = (k / nSides) * Math.PI * 2;
+      const radNoise = 0.78 + rnd() * 0.42;
+      const lx = Math.cos(a) * s.rx * radNoise;
+      const lz = Math.sin(a) * s.rz * radNoise;
+      const wx = s.ox + lx * cs - lz * sn;
+      const wz = s.oz + lx * sn + lz * cs;
+      base.push(m.v(wx, -0.05, wz, 0.38));
+      top.push(m.v(wx * 0.78 + s.ox * 0.22, s.ry * (0.75 + rnd() * 0.5), wz * 0.78 + s.oz * 0.22, 0.85));
+    }
+    const peak = m.v(s.ox, s.ry * 1.15, s.oz, 0.96);
+    for (let k = 0; k < nSides; k++) {
+      const nk = (k + 1) % nSides;
+      m.quad(base[k], base[nk], top[nk], top[k]);
+      m.tri(top[k], top[nk], peak);
+    }
+  }
+  return m.build();
+}
+
+// 16. Giant Fluted Tridacna Reef Clam (Corrugated Ivory Shell Valves + Ruffled Electric Velvet Mantle Lip)
+function meshReefShell() {
+  const m = new ProcMesh();
+  const uSegs = 14;
+  const vSegs = 6;
+
+  // Build both left & right gaping fluted bivalve shells (aAo = 0.30..0.58)
+  for (const side of [-1, 1]) {
+    const grid = [];
+    for (let iv = 0; iv <= vSegs; iv++) {
+      const v = iv / vSegs; // 0 = hinge base -> 1 = fluted rim
+      const row = [];
+      for (let iu = 0; iu <= uSegs; iu++) {
+        const u = iu / uSegs; // 0..1 along shell width
+        const a = (u - 0.5) * Math.PI * 0.92;
+        const flute = Math.sin(u * Math.PI * 7.0) * 0.055 * v;
+        const x = Math.sin(a) * (0.28 + 0.44 * Math.sin(v * Math.PI * 0.78));
+        const openAngle = 0.42 + v * 0.48;
+        const z = side * (0.04 + Math.sin(openAngle) * v * 0.34 + flute);
+        const y = Math.cos(a) * 0.08 + v * 0.44 + Math.cos(u * Math.PI * 7.0) * 0.035 * v;
+        row.push(m.v(x, y, z, 0.30 + 0.28 * v));
+      }
+      grid.push(row);
+    }
+    for (let iv = 0; iv < vSegs; iv++) {
+      for (let iu = 0; iu < uSegs; iu++) {
+        const a = grid[iv][iu];
+        const b = grid[iv][iu + 1];
+        const c = grid[iv + 1][iu + 1];
+        const d_ = grid[iv + 1][iu];
+        if (side > 0) m.quad(a, b, c, d_);
+        else m.quad(a, d_, c, b);
+      }
+    }
+  }
+
+  // Ruffled iridescent velvet mantle protruding gently between shell lips (aAo = 0.85..0.98)
+  const mRows = 4;
+  const mGrid = [];
+  for (let ir = 0; ir <= mRows; ir++) {
+    const rt = ir / mRows;
+    const row = [];
+    for (let iu = 0; iu <= uSegs; iu++) {
+      const u = iu / uSegs;
+      const a = (u - 0.5) * Math.PI * 0.86;
+      const x = Math.sin(a) * (0.58 * (0.45 + 0.55 * rt));
+      const wave = Math.sin(u * Math.PI * 9.0) * 0.045 * rt;
+      const z = (rt - 0.5) * 0.44 + wave;
+      const y = 0.26 + Math.sin(rt * Math.PI) * 0.19 + Math.abs(wave) * 0.4;
+      row.push(m.v(x, y, z, 0.84 + 0.14 * Math.sin(rt * Math.PI)));
+    }
+    mGrid.push(row);
+  }
+  for (let ir = 0; ir < mRows; ir++) {
+    for (let iu = 0; iu < uSegs; iu++) {
+      m.quad(mGrid[ir][iu], mGrid[ir][iu + 1], mGrid[ir + 1][iu + 1], mGrid[ir + 1][iu]);
+    }
+  }
+  return m.build();
+}
+
 // Base kelp / seagrass blade ribbon geometry (width [-1..1] tapered, height [0..1])
 function buildBladeGeometry(segmentsY, widthRatio = 1.0) {
   const pos = [];
@@ -1630,6 +1728,8 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
     anemone: meshAnemone(),
     fighter: meshFighterWreck(),
     giantFan: meshGiantFan(),
+    rubble: meshCoralRubble(),
+    clam: meshReefShell(),
   };
 
   const buckets = {
@@ -1648,6 +1748,8 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
     anemone: [],
     fighter: [],
     giantFan: [],
+    rubble: [],
+    clam: [],
   };
 
   const tmpPos = new THREE.Vector3();
@@ -2095,6 +2197,72 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
     });
   }
 
+  // 4c. High-Density Micro Coral Rubble Shards (~2,200) & Giant Fluted Tridacna Reef Clams (~72)
+  for (let i = 0; i < 2200; i++) {
+    const nearLandmark = i < 700;
+    const vid = terrain.pickVertex((x, y, z, nx, ny) => {
+      if (ny < 0.42 || y > -9.0) return false;
+      if (nearLandmark) {
+        return (
+          (Math.abs(x) < 38 && Math.abs(z) < 42) ||
+          Math.hypot(x - 71, z + 25) < 18 ||
+          Math.hypot(x - 61.5, z - 64.5) < 22 ||
+          Math.hypot(x - 6, z - 84) < 22
+        );
+      }
+      return Math.abs(x) < 102 && Math.abs(z) < 102;
+    });
+    const rx = terrain.wp[vid * 3];
+    const ry = terrain.wp[vid * 3 + 1];
+    const rz = terrain.wp[vid * 3 + 2];
+    const rnx = terrain.wn[vid * 3];
+    const rny = terrain.wn[vid * 3 + 1];
+    const rnz = terrain.wn[vid * 3 + 2];
+    if (Math.hypot(rx - 71.0, rz + 25.0) < 7.2 && ry > -25.0) continue;
+    if (Math.abs(rx - 6.0) < 5.5 && rz > 71.0 && rz < 101.0 && ry > -42.0 && ry < -29.0) continue;
+    const scale = rr(0.35, 1.05);
+    buckets.rubble.push({
+      x: rx,
+      y: ry - 0.04,
+      z: rz,
+      scale,
+      q: qFromYToNormal(rnx, rny, rnz, rr(0, Math.PI * 2)),
+      kind: 0,
+      seed: rnd(),
+      zoneTint: Math.max(terrain.zoneP(rx, rz), terrain.magAt(rx, rz)),
+      extra: 1.0,
+    });
+  }
+
+  for (let ci = 0; ci < 72; ci++) {
+    const isNear = ci < 36;
+    const vid = terrain.pickVertex((x, y, z, nx, ny) => {
+      if (ny < 0.58 || y < -42.0 || y > -11.0) return false;
+      return isNear ? (Math.abs(x) < 44 && Math.abs(z) < 46) : (Math.abs(x) < 92 && Math.abs(z) < 92);
+    });
+    const cx = terrain.wp[vid * 3];
+    const cy = terrain.wp[vid * 3 + 1];
+    const cz = terrain.wp[vid * 3 + 2];
+    const cnx = terrain.wn[vid * 3];
+    const cny = terrain.wn[vid * 3 + 1];
+    const cnz = terrain.wn[vid * 3 + 2];
+    if (nearClearing(cx, cz, 4.0) && ci >= 16) continue;
+    if (Math.abs(terrain.dw(cx, cy, cz)) > 0.45) continue;
+    const scale = rr(0.75, 1.55);
+    buckets.clam.push({
+      x: cx,
+      y: cy - 0.06,
+      z: cz,
+      scale,
+      q: qFromYToNormal(cnx * 0.45, Math.max(0.65, cny), cnz * 0.45, rr(0, Math.PI * 2)),
+      kind: 11,
+      seed: rnd(),
+      zoneTint: terrain.magAt(cx, cz),
+      extra: 1.0,
+    });
+    if (ci % 4 === 0) glintOrigins.push(new THREE.Vector3(cx, cy + 0.5, cz));
+  }
+
   // ============================================================================
   // 5. Dense GPU-Instanced Kelp Cathedrals (Stipes + Fronds) & 8-Type Benthic Flora
   // ============================================================================
@@ -2325,10 +2493,21 @@ export function compileWorldEcology(terrain, sharedUniforms, { isMobile = false 
     new THREE.Vector3(0, 4.2, 26)
   );
 
+  // Export up to 48 grounded Sea Anemone anchors (hero + canyon colonies) for symbiotic Clownfish AI
+  const anemoneAnchors = [];
+  const totalAnem = buckets.anemone.length;
+  // Prioritize hero anemones (pushed last) plus well-spaced canyon colonies
+  for (let i = totalAnem - 1; i >= 0 && anemoneAnchors.length < 48; i--) {
+    const a = buckets.anemone[i];
+    if (i < totalAnem - 14 && i % 4 !== 0) continue;
+    anemoneAnchors.push({ x: a.x, y: a.y, z: a.z, scale: a.scale });
+  }
+
   return {
     group,
     shadowGroup,
     flyPts,
+    anemoneAnchors,
     stats: {
       tallBlades: tallBlades.length,
       smallBlades: smallBlades.length,
