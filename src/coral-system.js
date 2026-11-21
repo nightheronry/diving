@@ -551,88 +551,407 @@ function meshFluke() {
   return m.build();
 }
 
-// 11. Sunken Wooden Shipwreck (Tilted Hull Ribs, Deck, Broken Mast & Bowsprit)
+// 11. GTA-6-Grade Sunken 18th-Century Wooden Galleon Shipwreck
+// Thick Double-Walled Oak Hull + Dramatic Smashed Hull Breaches + 16 Exposed Curved Frame Ribs +
+// Carved Stern Transom & Mullioned Captain's Cabin Windows + Rudder + Raised Quarterdeck +
+// Ship's Helm Wheel + 2 Naval Cannons on Carriages + Open Cargo Hatch Grating + Barrels +
+// Splintered Mainmast with Crow's Nest & Snapped Yardarm + Foremast + Bowsprit +
+// Draped Catenary Rigging Shrouds + Hanging Admiralty Iron Anchor & Chain
 function meshShip() {
   const m = new ProcMesh();
-  const stations = 16;
-  const arcSegs = 12;
-  const length = 11.5;
+  const stations = 34;
+  const arcSegs = 20;
+  const length = 13.2;
   const halfLen = length * 0.5;
-  const rings = [];
+  const hullThick = 0.16;
 
-  // Open curved hull shell (outer planks + thick gunwale rim + inner bilge)
-  for (let i = 0; i <= stations; i++) {
-    const u = i / stations; // 0 = stern, 1 = bow
+  // Helper: oriented wooden plank / structural timber / hardware box with clean outward normals
+  function addBox(cx, cy, cz, hx, hy, hz, rotY = 0, rotX = 0, rotZ = 0, aoBot = 0.55, aoTop = 0.92) {
+    const cY = Math.cos(rotY), sY = Math.sin(rotY);
+    const cX = Math.cos(rotX), sX = Math.sin(rotX);
+    const cZ = Math.cos(rotZ), sZ = Math.sin(rotZ);
+    const corners = [
+      [-hx, -hy, -hz], [hx, -hy, -hz], [hx, hy, -hz], [-hx, hy, -hz],
+      [-hx, -hy, hz], [hx, -hy, hz], [hx, hy, hz], [-hx, hy, hz],
+    ];
+    const verts = corners.map(([lx, ly, lz]) => {
+      // Z -> X -> Y rotation
+      let x1 = lx * cZ - ly * sZ;
+      let y1 = lx * sZ + ly * cZ;
+      let z1 = lz;
+      let y2 = y1 * cX - z1 * sX;
+      let z2 = y1 * sX + z1 * cX;
+      let x2 = x1;
+      let x3 = x2 * cY + z2 * sY;
+      let z3 = -x2 * sY + z2 * cY;
+      let y3 = y2;
+      return m.v(cx + x3, cy + y3, cz + z3, ly > 0 ? aoTop : aoBot);
+    });
+    // 6 faces CCW outward
+    m.quad(verts[0], verts[3], verts[2], verts[1]); // -Z
+    m.quad(verts[4], verts[5], verts[6], verts[7]); // +Z
+    m.quad(verts[0], verts[1], verts[5], verts[4]); // -Y
+    m.quad(verts[3], verts[7], verts[6], verts[2]); // +Y
+    m.quad(verts[0], verts[4], verts[7], verts[3]); // -X
+    m.quad(verts[1], verts[2], verts[6], verts[5]); // +X
+  }
+
+  function hullBeamAt(u) {
+    // Broad galleon amidships, sculpted tumblehome stern (u=0), sharp curving bow (u=1)
+    if (u < 0.08) return 1.48 + (u / 0.08) * 0.45;
+    if (u > 0.78) {
+      const t = (u - 0.78) / 0.22;
+      return Math.max(0.06, 2.18 * Math.pow(Math.max(0.0, 1.0 - t), 0.72));
+    }
+    return 1.93 + Math.sin(((u - 0.08) / 0.70) * Math.PI) * 0.56;
+  }
+
+  function hullSheerAt(u) {
+    // Classic high raised stern quarterdeck (u < 0.25) & sweeping forecastle bow (u > 0.80)
+    const sternLift = u < 0.30 ? Math.pow(1.0 - u / 0.30, 1.8) * 1.15 : 0.0;
+    const bowLift = u > 0.74 ? Math.pow((u - 0.74) / 0.26, 1.7) * 0.82 : 0.0;
+    return sternLift + bowLift;
+  }
+
+  function hullPoint(u, v, inset = 0.0) {
     const z = (u - 0.5) * length;
-    // Narrow to pointy prow at u=1, square transom taper at stern u=0
-    const beam = Math.sin(Math.pow(u, 0.65) * Math.PI * 0.92) * 2.15 + 0.18;
-    const sheer = Math.pow(Math.abs(u - 0.45) * 1.8, 2.0) * 0.75;
-    const rocker = Math.pow(u - 0.5, 2.0) * 0.9;
-    const ring = [];
+    const beam = Math.max(0.04, hullBeamAt(u) - inset);
+    const sheer = hullSheerAt(u);
+    const rocker = Math.pow(u - 0.48, 2.0) * 0.85;
+    const a = (v - 0.5) * Math.PI; // -PI/2 port gunwale -> 0 keel -> +PI/2 starboard gunwale
+    const absSin = Math.abs(Math.sin(a));
+    // Tumblehome slight inward curve near upper gunwale on galleon hull
+    const tumble = absSin > 0.82 ? 1.0 - Math.pow((absSin - 0.82) / 0.18, 2.0) * 0.075 : 1.0;
+    const x = Math.sin(a) * beam * tumble;
+    const y = -Math.cos(a) * (1.62 - inset * 0.65) + rocker + absSin * (0.88 + sheer) + 0.62;
+    return [x, y, z];
+  }
+
+  // Smashed hull breach masks (starboard midship gash & port forward breach exposing internal oak ribs!)
+  function isBreachCell(i, j) {
+    const u = (i + 0.5) / stations;
+    const v = (j + 0.5) / arcSegs;
+    // Dramatic jagged starboard breach amidships
+    const d1 = Math.hypot((u - 0.52) / 0.13, (v - 0.84) / 0.16);
+    if (d1 < 0.92 + Math.sin(i * 3.1 + j * 2.3) * 0.18) return true;
+    // Secondary port forward hull puncture
+    const d2 = Math.hypot((u - 0.67) / 0.085, (v - 0.16) / 0.14);
+    if (d2 < 0.88 + Math.cos(i * 4.2 - j * 1.9) * 0.16) return true;
+    // Broken port waist gunwale bite
+    if (u > 0.36 && u < 0.50 && v < 0.12) return true;
+    return false;
+  }
+
+  // ---- 1. Thick Double-Walled Curved Oak Hull Shell (Outer Planks + Inner Ceiling + Gunwale Cap) ----
+  const outerRings = [];
+  const innerRings = [];
+  for (let i = 0; i <= stations; i++) {
+    const u = i / stations;
+    const oRing = [];
+    const iRing = [];
     for (let j = 0; j <= arcSegs; j++) {
-      const v = j / arcSegs; // 0 = port gunwale -> 0.5 = keel -> 1 = starboard gunwale
-      const a = (v - 0.5) * Math.PI;
-      const x = Math.sin(a) * beam;
-      const y = -Math.cos(a) * 1.45 + rocker + Math.abs(Math.sin(a)) * sheer + 0.75;
-      const ao = 0.42 + 0.58 * (0.5 + 0.5 * Math.sin(Math.abs(a)));
-      ring.push(m.v(x, y, z, ao));
+      const v = j / arcSegs;
+      const [ox, oy, oz] = hullPoint(u, v, 0.0);
+      const [ix, iy, iz] = hullPoint(u, v, hullThick);
+      const sideFactor = Math.abs(v - 0.5) * 2.0; // 0 at keel, 1 at gunwale
+      const oAo = 0.48 + 0.52 * sideFactor;
+      const iAo = 0.24 + 0.44 * sideFactor;
+      oRing.push(m.v(ox, oy, oz, oAo));
+      iRing.push(m.v(ix, iy, iz, iAo));
     }
-    rings.push(ring);
+    outerRings.push(oRing);
+    innerRings.push(iRing);
   }
 
-  // Thick double-sided outer/inner hull surface
   for (let i = 0; i < stations; i++) {
-    const r0 = rings[i];
-    const r1 = rings[i + 1];
+    const o0 = outerRings[i], o1 = outerRings[i + 1];
+    const n0 = innerRings[i], n1 = innerRings[i + 1];
     for (let j = 0; j < arcSegs; j++) {
-      m.quad(r0[j], r0[j + 1], r1[j + 1], r1[j]);
-      m.quad(r0[j], r1[j], r1[j + 1], r0[j + 1]);
+      if (isBreachCell(i, j)) continue;
+      // Outer hull planks (outward normals)
+      m.quad(o0[j], o1[j], o1[j + 1], o0[j + 1]);
+      // Inner bilge ceiling planks (inward normals)
+      m.quad(n0[j], n0[j + 1], n1[j + 1], n1[j]);
+      // Stitch breach boundary thickness caps so smashed hull edges look like thick solid timber!
+      if (i > 0 && isBreachCell(i - 1, j)) m.quad(o0[j], o0[j + 1], n0[j + 1], n0[j]);
+      if (i < stations - 1 && isBreachCell(i + 1, j)) m.quad(o1[j], n1[j], n1[j + 1], o1[j + 1]);
+      if (j > 0 && isBreachCell(i, j - 1)) m.quad(o0[j], n0[j], n1[j], o1[j]);
+      if (j < arcSegs - 1 && isBreachCell(i, j + 1)) m.quad(o0[j + 1], o1[j + 1], n1[j + 1], n0[j + 1]);
+    }
+    // Thick gunwale cap rails along port (j=0) and starboard (j=arcSegs)
+    if (!isBreachCell(i, 0)) {
+      m.quad(o0[0], n0[0], n1[0], o1[0]);
+    }
+    if (!isBreachCell(i, arcSegs - 1)) {
+      m.quad(o0[arcSegs], o1[arcSegs], n1[arcSegs], n0[arcSegs]);
     }
   }
 
-  // Exposed structural hull ribs & weathered deck beams
-  for (let i = 2; i < stations - 1; i += 2) {
+  // ---- 2. Heavy Structural Oak Keel, Sweeping Stempost Prow & Carved Stern Transom Gallery ----
+  // Keel timber along centerline bottom + curved stempost prow rising out front
+  const keelPts = [];
+  for (let k = 0; k <= 12; k++) {
+    const u = k / 12;
+    const [kx, ky, kz] = hullPoint(u, 0.5, -0.06);
+    keelPts.push(new THREE.Vector3(kx, ky - 0.14, kz));
+  }
+  keelPts.push(
+    new THREE.Vector3(0, 0.35, halfLen + 0.35),
+    new THREE.Vector3(0, 1.55, halfLen + 0.72),
+    new THREE.Vector3(0, 2.38, halfLen + 0.92)
+  );
+  m.tube(keelPts, 6, (t) => (t > 0.78 ? 0.17 - (t - 0.78) * 0.25 : 0.22), true, true, (t) => 0.45 + 0.45 * t);
+
+  // Heavy Stern Transom Wall + Ornate Captain's Cabin Gallery (3 Mullioned Stern Windows + Railings)
+  const sternZ = -halfLen;
+  const sternBeam = hullBeamAt(0.0);
+  // Solid lower stern transom planks
+  addBox(0, 0.48, sternZ, sternBeam * 0.88, 0.95, 0.14, 0, -0.14, 0, 0.42, 0.74);
+  // Stern cabin upper cornice & vertical mullion pillars framing 3 recessed dark cabin windows
+  const winY = 1.62;
+  addBox(0, winY + 0.56, sternZ - 0.10, sternBeam * 0.92, 0.12, 0.20, 0, 0, 0, 0.65, 0.92);
+  addBox(0, winY - 0.44, sternZ - 0.04, sternBeam * 0.90, 0.12, 0.20, 0, 0, 0, 0.55, 0.85);
+  // Dark recessed cabin window backing plate
+  addBox(0, winY + 0.06, sternZ + 0.08, sternBeam * 0.80, 0.46, 0.06, 0, 0, 0, 0.14, 0.18);
+  // 4 Vertical Mullions + Horizontal Transom Bars across cabin windows
+  for (let w = -1.5; w <= 1.5; w += 1.0) {
+    addBox(w * 0.76, winY + 0.06, sternZ - 0.06, 0.08, 0.50, 0.10, 0, 0, 0, 0.55, 0.88);
+  }
+  addBox(0, winY + 0.06, sternZ - 0.05, sternBeam * 0.82, 0.045, 0.08, 0, 0, 0, 0.65, 0.88);
+  // Tilted Wooden Rudder Blade hinged at sternpost
+  addBox(0.18, -0.05, sternZ - 0.46, 0.08, 1.15, 0.48, 0.34, 0, 0, 0.42, 0.75);
+
+  // ---- 3. 16 Continuous Curved Internal Oak Frame Ribs (Visible through Hull Breaches!) ----
+  for (let i = 2; i <= stations - 3; i += 2) {
+    const u = i / stations;
+    const ribPts = [];
+    for (let s = 0; s <= 12; s++) {
+      const v = 0.02 + (s / 12) * 0.96;
+      const [rx, ry, rz] = hullPoint(u, v, hullThick * 0.92);
+      ribPts.push(new THREE.Vector3(rx, ry, rz));
+    }
+    m.tube(ribPts, 5, 0.085, true, true, (t) => 0.38 + 0.52 * Math.abs(t - 0.5) * 2.0);
+  }
+
+  // ---- 4. Weathered Planked Main Deck, Shattered Hold Opening, Raised Quarterdeck & Railings ----
+  // Raised Quarterdeck floor at stern (z: -halfLen .. -2.8)
+  const qDeckY = 1.92;
+  for (let p = -4; p <= 4; p++) {
+    const px = p * 0.34;
+    const plankLen = 1.85 + Math.sin(p * 2.3) * 0.25;
+    addBox(px, qDeckY, sternZ + plankLen + 0.12, 0.145, 0.055, plankLen, 0, 0.04, 0, 0.55, 0.88);
+  }
+  // Quarterdeck forward balustrade rail & stanchions
+  addBox(0, qDeckY + 0.68, -2.85, 1.86, 0.07, 0.08, 0, 0, 0, 0.72, 0.95);
+  for (let b = -4; b <= 4; b++) {
+    if (b === 0) continue; // companionway stair gap
+    addBox(b * 0.44, qDeckY + 0.34, -2.85, 0.05, 0.34, 0.05, 0, 0, 0, 0.52, 0.85);
+  }
+  // Port & Starboard quarterdeck bulwark rail stanchions
+  for (const side of [-1, 1]) {
+    addBox(side * 1.82, qDeckY + 0.64, -4.65, 0.08, 0.08, 1.92, 0, 0.08, 0, 0.70, 0.95);
+    for (let k = 0; k < 5; k++) {
+      addBox(side * 1.82, qDeckY + 0.32, -6.3 + k * 0.82, 0.05, 0.34, 0.05, 0, 0, 0, 0.55, 0.85);
+    }
+  }
+
+  // Hero Wooden Ship's Helm Wheel on Quarterdeck (hub, octagonal rim, 8 turned spokes!)
+  {
+    const wx = 0.0, wy = qDeckY + 0.78, wz = -4.35;
+    // Wheel pedestal & binnacle compass post
+    addBox(wx, qDeckY + 0.36, wz - 0.18, 0.14, 0.36, 0.16, 0, 0, 0, 0.52, 0.82);
+    addBox(wx, qDeckY + 0.44, wz + 0.38, 0.15, 0.44, 0.15, 0, 0, 0, 0.55, 0.86);
+    // Wheel hub axle
+    m.tube([new THREE.Vector3(wx, wy, wz - 0.24), new THREE.Vector3(wx, wy, wz + 0.14)], 8, 0.09, true, true, () => 0.78);
+    // Outer wheel rim ring + 8 projecting turned handle spokes
+    const rimPts = [];
+    const rimR = 0.48;
+    for (let s = 0; s <= 12; s++) {
+      const a = (s / 12) * Math.PI * 2;
+      rimPts.push(new THREE.Vector3(wx + Math.cos(a) * rimR, wy + Math.sin(a) * rimR, wz));
+    }
+    m.tube(rimPts, 6, 0.055, false, false, () => 0.92);
+    for (let sp = 0; sp < 8; sp++) {
+      const a = (sp / 8) * Math.PI * 2 + 0.18;
+      m.tube([
+        new THREE.Vector3(wx + Math.cos(a) * 0.06, wy + Math.sin(a) * 0.06, wz),
+        new THREE.Vector3(wx + Math.cos(a) * (rimR + 0.22), wy + Math.sin(a) * (rimR + 0.22), wz),
+      ], 5, (t) => (t > 0.7 ? 0.032 : 0.026), true, true, () => 0.92);
+    }
+  }
+
+  // Main Deck Cross-Beams & Partially Shattered Deck Planks (opening into dark cargo hold!)
+  for (let i = 9; i <= 29; i += 2) {
     const u = i / stations;
     const z = (u - 0.5) * length;
-    const beam = Math.sin(Math.pow(u, 0.65) * Math.PI * 0.92) * 2.02;
-    const sheer = Math.pow(Math.abs(u - 0.45) * 1.8, 2.0) * 0.72;
-    const yDeck = 0.68 + sheer;
-    // Skip every third beam for ruined open hull gap
-    if (i === 8 || i === 10) continue;
-    const beamPts = [
-      new THREE.Vector3(-beam, yDeck, z),
-      new THREE.Vector3(0, yDeck + 0.14, z),
-      new THREE.Vector3(beam, yDeck, z),
-    ];
-    m.tube(beamPts, 5, 0.09, true, true, () => 0.72);
+    const beam = hullBeamAt(u) - 0.22;
+    const yDeck = 0.96 + hullSheerAt(u) * 0.72;
+    // Dramatic open cargo hold gap amidships (i = 15, 17, 19) with broken splintered stub beams
+    if (i === 15 || i === 17 || i === 19) {
+      addBox(-beam * 0.68, yDeck, z, beam * 0.30, 0.08, 0.10, 0.06, 0, -0.05, 0.48, 0.80);
+      addBox(beam * 0.72, yDeck, z, beam * 0.26, 0.08, 0.10, -0.08, 0, 0.07, 0.48, 0.80);
+      continue;
+    }
+    addBox(0, yDeck, z, beam, 0.085, 0.105, 0, 0, 0, 0.52, 0.84);
+  }
+  // Forward forecastle deck planking & deck capstan (windlass)
+  for (let p = -3; p <= 3; p++) {
+    const px = p * 0.32;
+    const maxLen = Math.max(0.55, 1.55 - Math.abs(p) * 0.24);
+    addBox(px, 1.24, 4.15 - (1.55 - maxLen) * 0.35, 0.14, 0.05, maxLen, 0, -0.06, 0, 0.55, 0.88);
+  }
+  // Wooden Deck Capstan drum + capstan bars
+  m.tube([new THREE.Vector3(0, 1.24, 3.35), new THREE.Vector3(0, 2.02, 3.35)], 10, (t) => 0.28 - Math.sin(t * Math.PI) * 0.06, true, true, () => 0.82);
+
+  // Slatted Wooden Cargo Hatch Coaming & Grating forward of mainmast
+  addBox(0, 1.12, 1.55, 0.88, 0.14, 0.92, 0, 0, 0, 0.48, 0.78);
+  addBox(0, 1.22, 1.55, 0.74, 0.05, 0.78, 0, 0, 0, 0.18, 0.24); // dark hatch interior
+  for (let g = -3; g <= 3; g++) {
+    if (g === 1) continue; // one broken missing grate slat!
+    addBox(g * 0.21, 1.27, 1.55, 0.04, 0.035, 0.78, 0, 0, 0, 0.65, 0.92);
   }
 
-  // Broken Foremast & Mainmast stumps + Bowsprit
+  // ---- 5. Two Iron Naval Cannons on Stepped Wooden Gun Carriages + Tumbled Cargo Barrels ----
+  const cannonSpecs = [
+    { x: -1.22, y: 1.18, z: 2.35, rotY: -1.42 },
+    { x: 1.25, y: 1.18, z: -1.95, rotY: 1.52 },
+  ];
+  for (const cn of cannonSpecs) {
+    // Stepped oak gun carriage + small wooden truck wheels
+    addBox(cn.x, cn.y + 0.16, cn.z, 0.32, 0.16, 0.48, cn.rotY, 0, 0, 0.45, 0.78);
+    // Tapered heavy cast-iron cannon barrel + cascabel knob
+    const dx = Math.sin(cn.rotY), dz = Math.cos(cn.rotY);
+    m.tube([
+      new THREE.Vector3(cn.x - dx * 0.58, cn.y + 0.36, cn.z - dz * 0.58),
+      new THREE.Vector3(cn.x + dx * 0.92, cn.y + 0.42, cn.z + dz * 0.92),
+    ], 10, (t) => (t < 0.12 ? 0.09 : 0.165 - t * 0.058 + (t > 0.88 ? 0.025 : 0.0)), true, true, () => 0.35);
+  }
+
+  // Tumbled Oak Cargo Barrels & Sunken Treasure Chest inside the open hold
+  const barrelSpecs = [
+    { x: 0.75, y: 0.18, z: -0.35, rx: 0.22, rz: 0.45 },
+    { x: 0.92, y: 0.24, z: 0.52, rx: 1.48, rz: 0.30 },
+    { x: -0.58, y: 0.14, z: -0.85, rx: 0.12, rz: -0.35 },
+  ];
+  for (const br of barrelSpecs) {
+    const bPts = [];
+    for (let k = 0; k <= 6; k++) {
+      const u = k / 6 - 0.5;
+      bPts.push(new THREE.Vector3(
+        br.x + Math.sin(br.rz) * u * 0.92,
+        br.y + Math.cos(br.rx) * Math.cos(br.rz) * u * 0.92,
+        br.z + Math.sin(br.rx) * u * 0.92
+      ));
+    }
+    m.tube(bPts, 10, (t) => 0.26 + Math.sin(t * Math.PI) * 0.08, true, true, () => 0.62);
+  }
+  // Iron-banded wooden cargo chest resting in hold
+  addBox(-0.62, 0.08, 0.35, 0.44, 0.26, 0.28, 0.42, 0.08, -0.14, 0.44, 0.78);
+
+  // ---- 6. Shattered Mainmast with Crow's Nest, Snapped Yardarm, Foremast, Bowsprit & Rigging ----
+  // Tall Splintered Mainmast (5.6m) with Crow's Nest Fighting Top platform
   m.tube(
-    [new THREE.Vector3(0, -0.35, -0.9), new THREE.Vector3(0.18, 4.1, -1.05)],
-    9,
-    (t) => 0.24 - t * 0.07,
+    [
+      new THREE.Vector3(0, -0.55, -0.85),
+      new THREE.Vector3(0.08, 2.40, -0.92),
+      new THREE.Vector3(0.24, 5.25, -1.04),
+      new THREE.Vector3(0.32, 5.65, -1.08),
+    ],
+    10,
+    (t) => (t > 0.88 ? 0.13 * (1.0 - (t - 0.88) / 0.12 * 0.65) : 0.27 - t * 0.11),
     true,
     true,
-    (t) => 0.65 + 0.35 * t
+    (t) => 0.55 + 0.42 * t
   );
+  // Crow's Nest platform & rim slats around mainmast (y = 3.85)
+  addBox(0.16, 3.82, -0.98, 0.76, 0.08, 0.66, 0.04, 0, -0.05, 0.58, 0.92);
+  addBox(0.16, 4.06, -1.60, 0.76, 0.16, 0.06, 0.04, 0, -0.05, 0.65, 0.94);
+  addBox(0.16, 4.06, -0.36, 0.76, 0.16, 0.06, 0.04, 0, -0.05, 0.65, 0.94);
+  addBox(-0.58, 4.06, -0.98, 0.06, 0.16, 0.66, 0.04, 0, -0.05, 0.65, 0.94);
+  addBox(0.90, 4.06, -0.98, 0.06, 0.16, 0.66, 0.04, 0, -0.05, 0.65, 0.94);
+
+  // Tilted Snapped Main Yardarm hanging askew across mainmast
   m.tube(
-    [new THREE.Vector3(-0.9, 1.5, -1.05), new THREE.Vector3(1.15, 1.72, -1.02)],
-    6,
-    0.09,
-    true,
-    true,
-    () => 0.85
-  );
-  // Bowsprit angling over prow
-  m.tube(
-    [new THREE.Vector3(0, 1.25, halfLen - 1.1), new THREE.Vector3(0, 2.45, halfLen + 2.8)],
-    7,
-    (t) => 0.16 - t * 0.09,
+    [
+      new THREE.Vector3(-2.45, 2.35, -0.82),
+      new THREE.Vector3(0.10, 2.88, -0.92),
+      new THREE.Vector3(2.25, 3.22, -1.12),
+    ],
+    8,
+    (t) => 0.115 - Math.abs(t - 0.5) * 0.11,
     true,
     true,
     () => 0.88
   );
+
+  // Shattered Foremast Stump forward of cargo hatch
+  m.tube(
+    [
+      new THREE.Vector3(0, -0.25, 3.75),
+      new THREE.Vector3(-0.08, 2.15, 3.82),
+      new THREE.Vector3(-0.18, 3.05, 3.92),
+    ],
+    9,
+    (t) => (t > 0.82 ? 0.14 * (1.0 - (t - 0.82) / 0.18 * 0.7) : 0.22 - t * 0.07),
+    true,
+    true,
+    (t) => 0.55 + 0.40 * t
+  );
+
+  // Sweeping Bowsprit & Jibboom jutting dramatically over the prow
+  m.tube(
+    [
+      new THREE.Vector3(0, 1.38, halfLen - 1.35),
+      new THREE.Vector3(0, 2.18, halfLen + 1.15),
+      new THREE.Vector3(0, 2.95, halfLen + 3.65),
+    ],
+    8,
+    (t) => 0.19 - t * 0.125,
+    true,
+    true,
+    () => 0.90
+  );
+
+  // Draped Catenary Hemp Rigging Shrouds & Stays sagging gracefully from Crow's Nest to Gunwales & Bowsprit
+  function addCatenaryRope(pA, pB, sag = 0.45, r = 0.032) {
+    const pts = [];
+    for (let k = 0; k <= 8; k++) {
+      const t = k / 8;
+      const p = new THREE.Vector3().lerpVectors(pA, pB, t);
+      p.y -= Math.sin(t * Math.PI) * sag;
+      pts.push(p);
+    }
+    m.tube(pts, 5, r, false, false, () => 0.76);
+  }
+  const mastTop = new THREE.Vector3(0.16, 3.75, -0.98);
+  addCatenaryRope(mastTop, new THREE.Vector3(-2.12, 1.55, -1.65), 0.32, 0.034);
+  addCatenaryRope(mastTop, new THREE.Vector3(-2.18, 1.50, -0.45), 0.28, 0.030);
+  addCatenaryRope(mastTop, new THREE.Vector3(2.15, 1.52, -1.55), 0.35, 0.034);
+  addCatenaryRope(mastTop, new THREE.Vector3(2.18, 1.48, -0.35), 0.30, 0.030);
+  addCatenaryRope(mastTop, new THREE.Vector3(-0.10, 2.75, 3.85), 0.62, 0.036); // Forestay
+  addCatenaryRope(new THREE.Vector3(-0.10, 2.75, 3.85), new THREE.Vector3(0, 2.55, halfLen + 2.35), 0.55, 0.032); // Jibstay
+
+  // ---- 7. Heavy Corroded Admiralty Iron Anchor & Draped Anchor Chain off Port Bow ----
+  {
+    const ax = -1.62, ay = 0.25, az = halfLen - 1.45;
+    // Anchor shank
+    m.tube([new THREE.Vector3(ax, ay + 1.05, az), new THREE.Vector3(ax - 0.12, ay - 0.55, az + 0.12)], 7, 0.068, true, true, () => 0.34);
+    // Wooden/iron anchor stock cross-bar
+    m.tube([new THREE.Vector3(ax - 0.18, ay + 0.85, az - 0.52), new THREE.Vector3(ax + 0.14, ay + 0.88, az + 0.52)], 6, 0.055, true, true, () => 0.40);
+    // Curved crescent anchor arms + pointed flukes
+    const armPts = [];
+    for (let k = 0; k <= 10; k++) {
+      const u = (k / 10) * 2.0 - 1.0; // -1..+1
+      armPts.push(new THREE.Vector3(
+        ax - 0.12 + u * 0.62,
+        ay - 0.55 + u * u * 0.42,
+        az + 0.12 + u * 0.18
+      ));
+    }
+    m.tube(armPts, 6, (t) => 0.065 + (Math.abs(t - 0.5) > 0.36 ? 0.045 : 0.0), true, true, () => 0.32);
+    // Anchor chain curving from bow hawsehole down to anchor ring
+    addCatenaryRope(new THREE.Vector3(-0.92, 1.55, halfLen - 1.05), new THREE.Vector3(ax, ay + 1.05, az), 0.24, 0.048);
+  }
 
   return m.build();
 }

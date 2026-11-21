@@ -1154,14 +1154,19 @@ function buildMantaGeometry() {
 }
 
 // ============================================================================
-// ============================================================================
-// Schooling Fish Geometry (Direct Port of abyssal-garden meshFish in world.js)
+// GTA-6-Grade Anatomical Tropical Reef Fish Geometry (Instanced 4,240+ Fish)
+// Smooth 12x12 Fusiform Body + Gill Operculum Contour + Swept Dorsal Fin +
+// Paired Flared Pectoral Wings + Anal/Pelvic Fins + Forked Crescent Caudal Tail +
+// Disconnected 3D Glossy Eyes (aFishPart: 0=body, 1=fins, 2=tail, 3=eye)
 // ============================================================================
 function buildFishGeometry() {
   const p = [];
+  const fPart = []; // 0=body scales, 1=translucent fins, 2=forked caudal tail, 3=disconnected glossy eye
   const idx = [];
-  function v(x, y, z) {
+
+  function v(x, y, z, part = 0) {
     p.push(x, y, z);
+    fPart.push(part);
     return p.length / 3 - 1;
   }
   function tri(a, b, c) {
@@ -1171,32 +1176,120 @@ function buildFishGeometry() {
     idx.push(a, b, c, a, c, d);
   }
 
-  const X = [0.5, 0.3, 0.05, -0.22, -0.34];
-  const H = [0.01, 0.13, 0.17, 0.09, 0.035];
-  const Wd = [0.01, 0.05, 0.065, 0.03, 0.012];
+  // 1. High-Res Sculpted Fusiform Body (+X nose = +0.52 -> -X peduncle = -0.36)
+  const X = [0.52, 0.44, 0.34, 0.22, 0.10, -0.02, -0.14, -0.24, -0.32, -0.37];
+  const H = [0.008, 0.088, 0.145, 0.178, 0.184, 0.168, 0.132, 0.086, 0.048, 0.032];
+  const W = [0.008, 0.038, 0.062, 0.072, 0.070, 0.060, 0.044, 0.028, 0.016, 0.011];
+  const nSeg = 12;
   const rings = [];
-  for (let i = 0; i < 5; i++) {
+
+  for (let i = 0; i < X.length; i++) {
     const r = [];
-    for (let k = 0; k < 6; k++) {
-      const a = (k / 6) * Math.PI * 2;
-      r.push(v(X[i], Math.sin(a) * H[i], Math.cos(a) * Wd[i]));
+    // Slight gill operculum flare around i=2..3
+    const gillFlare = i === 2 ? 1.07 : i === 3 ? 1.03 : 1.0;
+    for (let k = 0; k < nSeg; k++) {
+      const a = (k / nSeg) * Math.PI * 2;
+      const sy = Math.sin(a);
+      const cz = Math.cos(a);
+      // Slightly fuller dorsal profile than ventral belly
+      const yOff = sy > 0 ? sy * H[i] * 1.04 : sy * H[i] * 0.94;
+      const zOff = cz * W[i] * gillFlare * (1.0 - 0.12 * Math.abs(sy));
+      r.push(v(X[i], yOff, zOff, 0));
     }
     rings.push(r);
   }
-  for (let i = 0; i < 4; i++) {
-    for (let k = 0; k < 6; k++) {
-      const k2 = (k + 1) % 6;
+  for (let i = 0; i < X.length - 1; i++) {
+    for (let k = 0; k < nSeg; k++) {
+      const k2 = (k + 1) % nSeg;
       quad(rings[i][k], rings[i + 1][k], rings[i + 1][k2], rings[i][k2]);
     }
   }
-  const a = v(-0.33, 0, 0);
-  const b = v(-0.56, 0.2, 0);
-  const c = v(-0.47, 0, 0);
-  const d = v(-0.56, -0.2, 0);
-  tri(a, b, c);
-  tri(a, c, d);
+  // Cap nose tip & peduncle cleanly
+  const noseV = v(0.54, 0.0, 0.0, 0);
+  for (let k = 0; k < nSeg; k++) {
+    const k2 = (k + 1) % nSeg;
+    tri(noseV, rings[0][k], rings[0][k2]);
+  }
 
-  // Area-weighted vertex normals (exact port of abyssal-garden Mesh.build)
+  // 2. Continuous Swept Dorsal Fin along Upper Ridge (part = 1)
+  const dRoots = [
+    [0.24, 0.174], [0.10, 0.184], [-0.04, 0.162], [-0.18, 0.114], [-0.28, 0.064],
+  ];
+  const dTips = [
+    [0.14, 0.275], [-0.02, 0.295], [-0.16, 0.255], [-0.28, 0.195], [-0.36, 0.115],
+  ];
+  const dR = dRoots.map(([x, y]) => v(x, y, 0.0, 1));
+  const dT = dTips.map(([x, y]) => v(x, y, 0.0, 1));
+  for (let i = 0; i < dR.length - 1; i++) {
+    quad(dR[i], dR[i + 1], dT[i + 1], dT[i]);
+  }
+
+  // 3. Anal Fin & Pelvic Ventral Fins (part = 1)
+  const a0 = v(-0.08, -0.140, 0.0, 1);
+  const a1 = v(-0.20, -0.095, 0.0, 1);
+  const a2 = v(-0.30, -0.052, 0.0, 1);
+  const at0 = v(-0.16, -0.225, 0.0, 1);
+  const at1 = v(-0.28, -0.205, 0.0, 1);
+  const at2 = v(-0.36, -0.118, 0.0, 1);
+  quad(a0, at0, at1, a1);
+  quad(a1, at1, at2, a2);
+
+  // Paired Flared Pectoral Wings & Pelvic Fins on Left (+Z) & Right (-Z) Flanks (part = 1)
+  for (const side of [-1, 1]) {
+    // Swept pectoral fin blade
+    const pRootF = v(0.24, -0.025, side * 0.066, 1);
+    const pRootB = v(0.14, -0.055, side * 0.064, 1);
+    const pMid = v(0.06, -0.040, side * 0.195, 1);
+    const pTip = v(-0.04, -0.085, side * 0.225, 1);
+    const pTrail = v(-0.02, -0.115, side * 0.135, 1);
+    quad(pRootF, pRootB, pTrail, pMid);
+    tri(pMid, pTrail, pTip);
+
+    // Small pelvic fin
+    const v0 = v(0.14, -0.155, side * 0.022, 1);
+    const v1 = v(0.04, -0.155, side * 0.020, 1);
+    const vt = v(-0.04, -0.225, side * 0.058, 1);
+    tri(v0, v1, vt);
+  }
+
+  // 4. Sculpted Deeply Forked Crescent Caudal Tail Fin (part = 2)
+  const tBaseTop = v(-0.35, 0.032, 0.0, 2);
+  const tBaseMid = v(-0.36, 0.0, 0.0, 2);
+  const tBaseBot = v(-0.35, -0.032, 0.0, 2);
+  const tMidTop = v(-0.50, 0.145, 0.0, 2);
+  const tTipTop = v(-0.66, 0.245, 0.0, 2);
+  const tNotch = v(-0.48, 0.0, 0.0, 2);
+  const tMidBot = v(-0.50, -0.145, 0.0, 2);
+  const tTipBot = v(-0.66, -0.245, 0.0, 2);
+  const tInnerTop = v(-0.56, 0.115, 0.0, 2);
+  const tInnerBot = v(-0.56, -0.115, 0.0, 2);
+  // Upper lobe
+  quad(tBaseTop, tMidTop, tInnerTop, tBaseMid);
+  tri(tMidTop, tTipTop, tInnerTop);
+  tri(tBaseMid, tInnerTop, tNotch);
+  // Lower lobe
+  quad(tBaseMid, tInnerBot, tMidBot, tBaseBot);
+  tri(tMidBot, tInnerBot, tTipBot);
+  tri(tBaseMid, tNotch, tInnerBot);
+
+  // 5. Two Disconnected Glossy 3D Eyes on Head Sides (part = 3)
+  for (const side of [-1, 1]) {
+    const ex = 0.355, ey = 0.038, ez = side * 0.054, er = 0.028;
+    const eCenter = v(ex, ey, ez + side * er * 0.55, 3);
+    const eRing = [];
+    const eSides = 8;
+    for (let s = 0; s < eSides; s++) {
+      const a = (s / eSides) * Math.PI * 2;
+      eRing.push(v(ex + Math.cos(a) * er, ey + Math.sin(a) * er, ez, 3));
+    }
+    for (let s = 0; s < eSides; s++) {
+      const ns = (s + 1) % eSides;
+      if (side > 0) tri(eCenter, eRing[s], eRing[ns]);
+      else tri(eCenter, eRing[ns], eRing[s]);
+    }
+  }
+
+  // Area-weighted vertex normals
   const n = p.length / 3;
   const N = new Float32Array(n * 3);
   for (let t = 0; t < idx.length; t += 3) {
@@ -1225,6 +1318,7 @@ function buildFishGeometry() {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+  geo.setAttribute('aFishPart', new THREE.Float32BufferAttribute(fPart, 1));
   geo.setIndex(idx);
   geo.computeBoundingSphere();
   return geo;
@@ -3251,173 +3345,310 @@ function buildSeabirds(sharedUniforms, nBirds = 48) {
   return mesh;
 }
 
+// ============================================================================
+// GTA-6-Grade Anatomical Green Sea Turtle (Chelonia mydas)
+// High-Res Heart-Shaped Carapace (36x36) with Flared Scalloped Marginal Rim +
+// Sculpted Scute Cushions & Vertebral Keel + Sculpted Plastron +
+// Reptilian Cranium with Hooked Horny Beak, Nostrils & Wrinkled Neck +
+// Watertight Auto-Outward-Wound Hydrofoil Fore-Flippers (with Anterior Scale Ridge & Claw Nub) +
+// Steering Hind Flippers + Disconnected Glossy Reptilian Eyes + 3D Turtle Barnacles (Chelonibia)
+// ============================================================================
 function buildSeaTurtleGeometry() {
-  // Procedural Green Sea Turtle (Chelonia mydas), facing +Z, dorsal +Y, wingspan ±1.28m
   const pos = [];
-  const norm = [];
-  const part = [];
+  // Continuous weights: x = edgeThin/rim, y = plastronMask, z = headNeckMask, w = partGroup (0=shell, 1=head, 2=leftFlip, 3=rightFlip, 4=hind/tail, 5=eye, 6=barnacle)
+  const matW = [];
   const idx = [];
 
-  const pushTri = (ax, ay, az, bx, by, bz, cx, cy, cz, pid) => {
-    const ux = bx - ax, uy = by - ay, uz = bz - az;
-    const vx = cx - ax, vy = cy - ay, vz = cz - az;
-    let nx = uy * vz - uz * vy;
-    let ny = uz * vx - ux * vz;
-    let nz = ux * vy - uy * vx;
-    const l = Math.hypot(nx, ny, nz) || 1;
-    nx /= l; ny /= l; nz /= l;
-    const base = pos.length / 3;
-    pos.push(ax, ay, az, bx, by, bz, cx, cy, cz);
-    norm.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
-    part.push(pid, pid, pid);
-    idx.push(base, base + 1, base + 2);
-  };
+  function pushTV(x, y, z, edge = 0, plast = 0, neck = 0, grp = 0) {
+    const id = pos.length / 3;
+    pos.push(x, y, z);
+    matW.push(edge, plast, neck, grp);
+    return id;
+  }
 
-  const addLoft = (rings, pid, flip = false) => {
-    const base = pos.length / 3;
-    const nS = rings[0].length;
-    for (let r = 0; r < rings.length; r++) {
-      for (let s = 0; s < nS; s++) {
-        const pt = rings[r][s];
-        pos.push(pt[0], pt[1], pt[2]);
-        norm.push(0, 1, 0);
-        part.push(pid);
+  function ensureTurtleOutward(startIdx) {
+    let vol6 = 0;
+    let cx = 0, cy = 0, cz = 0, cnt = 0;
+    for (let k = startIdx; k < idx.length; k += 3) {
+      const i0 = idx[k] * 3, i1 = idx[k + 1] * 3, i2 = idx[k + 2] * 3;
+      cx += pos[i0] + pos[i1] + pos[i2];
+      cy += pos[i0 + 1] + pos[i1 + 1] + pos[i2 + 1];
+      cz += pos[i0 + 2] + pos[i1 + 2] + pos[i2 + 2];
+      cnt += 3;
+    }
+    if (!cnt) return;
+    cx /= cnt; cy /= cnt; cz /= cnt;
+    for (let k = startIdx; k < idx.length; k += 3) {
+      const i0 = idx[k] * 3, i1 = idx[k + 1] * 3, i2 = idx[k + 2] * 3;
+      const ax = pos[i0] - cx, ay = pos[i0 + 1] - cy, az = pos[i0 + 2] - cz;
+      const bx = pos[i1] - cx, by = pos[i1 + 1] - cy, bz = pos[i1 + 2] - cz;
+      const dx = pos[i2] - cx, dy = pos[i2 + 1] - cy, dz = pos[i2 + 2] - cz;
+      vol6 += ax * (by * dz - bz * dy) + ay * (bz * dx - bx * dz) + az * (bx * dy - by * dx);
+    }
+    if (vol6 < 0) {
+      for (let k = startIdx; k < idx.length; k += 3) {
+        const tmp = idx[k + 1];
+        idx[k + 1] = idx[k + 2];
+        idx[k + 2] = tmp;
       }
     }
-    for (let r = 0; r < rings.length - 1; r++) {
-      for (let s = 0; s < nS; s++) {
-        const sn = (s + 1) % nS;
-        const a = base + r * nS + s;
-        const b = base + r * nS + sn;
-        const c = base + (r + 1) * nS + s;
-        const d = base + (r + 1) * nS + sn;
-        if (!flip) {
-          idx.push(a, c, b, b, c, d);
+  }
+
+  // ---- 1. Sculpted Heart-Shaped Carapace (with Flared Scalloped Rim & Scute Cushions) + Plastron ----
+  {
+    const shellStart = idx.length;
+    const nU = 34;
+    const nV = 36;
+    const shellRings = [];
+    for (let i = 0; i <= nU; i++) {
+      const u = i / nU; // 0 = pointed rear pygal tip (-0.94) -> 1 = broad anterior nuchal notch (+0.84)
+      const z = -0.94 + u * 1.78;
+      // Classic Chelonia mydas heart-shaped taper (broad across mid-anterior shoulders, tapered posteriorly)
+      const wBase = Math.sin(Math.pow(u, 0.72) * Math.PI);
+      const rx = 0.67 * Math.pow(Math.max(0.014, wBase), 0.76);
+      const domeH = 0.31 * Math.pow(Math.max(0.01, Math.sin(u * Math.PI)), 0.70);
+      // Subtle scalloped marginal rim wave along lateral shell skirt
+      const marginalScallop = 1.0 + 0.018 * Math.sin(u * Math.PI * 11.0) * Math.sin(u * Math.PI);
+
+      const ring = [];
+      for (let j = 0; j < nV; j++) {
+        const a = (j / nV) * Math.PI * 2;
+        const ca = Math.cos(a);
+        const sa = Math.sin(a);
+        // Flared overhanging marginal skirt right around equator (sa near 0)
+        const rimFlare = Math.exp(-Math.pow((sa - 0.05) / 0.16, 2.0)) * 0.055 * Math.sin(u * Math.PI);
+        let x = ca * (rx * marginalScallop + rimFlare);
+        let y;
+        let plastW = 0.0;
+        let edgeW = Math.exp(-Math.pow((sa - 0.04) / 0.18, 2.0));
+
+        if (sa >= 0) {
+          // Domed carapace + subtle vertebral keel + 5 vertebral & 4 costal pillow cushions
+          const keel = Math.exp(-Math.pow(ca / 0.22, 2.0)) * 0.022 * Math.sin(u * Math.PI);
+          const vScute = Math.sin(u * Math.PI * 5.0) * 0.008 * Math.exp(-Math.pow(ca / 0.32, 2.0));
+          const cScute = Math.sin(u * Math.PI * 4.0 + 0.4) * 0.007 * Math.exp(-Math.pow((Math.abs(ca) - 0.56) / 0.24, 2.0));
+          y = Math.pow(sa, 0.78) * domeH + 0.018 + (keel + vScute + cScute) * Math.sin(u * Math.PI);
         } else {
-          idx.push(a, b, c, b, d, c);
+          // Flattened plastron belly inset slightly inside the marginal carapace overhang
+          const inset = 1.0 - Math.min(1.0, -sa * 1.4) * 0.11;
+          x *= inset;
+          y = sa * 0.115 - 0.025;
+          plastW = Math.min(1.0, Math.max(0.0, (-sa - 0.06) / 0.28));
         }
+        ring.push(pushTV(x, y, z, edgeW, plastW, 0, 0));
+      }
+      shellRings.push(ring);
+    }
+    for (let i = 0; i < nU; i++) {
+      for (let j = 0; j < nV; j++) {
+        const jn = (j + 1) % nV;
+        idx.push(shellRings[i][j], shellRings[i][jn], shellRings[i + 1][jn], shellRings[i][j], shellRings[i + 1][jn], shellRings[i + 1][j]);
       }
     }
-  };
-
-  // 1. Domed teardrop Carapace (part = 0) & Plastron underside (part = 1)
-  const nU = 16;
-  const nV = 18;
-  const shellPts = [];
-  for (let i = 0; i <= nU; i++) {
-    const u = i / nU; // 0 = rear tail tip (-0.90), 1 = front neck notch (+0.82)
-    const z = -0.90 + u * 1.72;
-    const wProfile = Math.sin(Math.pow(u, 0.78) * Math.PI);
-    const rx = 0.64 * Math.pow(Math.max(0.02, wProfile), 0.78);
-    const domeH = 0.30 * Math.pow(Math.max(0.01, Math.sin(u * Math.PI)), 0.72);
-    const ring = [];
-    for (let j = 0; j < nV; j++) {
-      const a = (j / nV) * Math.PI * 2;
-      const ca = Math.cos(a);
-      const sa = Math.sin(a);
-      const x = ca * rx;
-      // Top is domed carapace, bottom is flatter plastron
-      const y = sa >= 0
-        ? Math.pow(sa, 0.76) * domeH + 0.02
-        : sa * 0.11 - 0.02;
-      ring.push([x, y, z, sa >= -0.08 ? 0.0 : 1.0]);
-    }
-    shellPts.push(ring);
-  }
-  const sBase = pos.length / 3;
-  for (let i = 0; i <= nU; i++) {
-    for (let j = 0; j < nV; j++) {
-      const p = shellPts[i][j];
-      pos.push(p[0], p[1], p[2]);
-      norm.push(0, 1, 0);
-      part.push(p[3]);
-    }
-  }
-  for (let i = 0; i < nU; i++) {
+    // Cap rear & front shell tips cleanly
+    const rearTip = pushTV(0, 0.0, -0.96, 1.0, 0.0, 0, 0);
+    const frontTip = pushTV(0, 0.02, 0.86, 1.0, 0.0, 0, 0);
     for (let j = 0; j < nV; j++) {
       const jn = (j + 1) % nV;
-      const a = sBase + i * nV + j;
-      const b = sBase + i * nV + jn;
-      const c = sBase + (i + 1) * nV + j;
-      const d = sBase + (i + 1) * nV + jn;
-      idx.push(a, b, c, b, d, c);
+      idx.push(rearTip, shellRings[0][jn], shellRings[0][j]);
+      idx.push(frontTip, shellRings[nU][j], shellRings[nU][jn]);
     }
+    ensureTurtleOutward(shellStart);
   }
 
-  // 2. Sculpted Head & Neck (part = 2)
-  const headRings = [];
-  const hSegs = 10;
-  const hSpecs = [
-    { z: 0.62, y: 0.02, rx: 0.14, ry: 0.11 },
-    { z: 0.80, y: 0.04, rx: 0.13, ry: 0.105 },
-    { z: 0.96, y: 0.06, rx: 0.155, ry: 0.125 },
-    { z: 1.12, y: 0.055, rx: 0.135, ry: 0.11 },
-    { z: 1.24, y: 0.03, rx: 0.075, ry: 0.065 },
-    { z: 1.29, y: 0.015, rx: 0.015, ry: 0.015 },
-  ];
-  for (const hs of hSpecs) {
-    const ring = [];
+  // ---- 2. Sculpted Reptilian Head, Wrinkled Neck Collar, Brow Eyelids & Hooked Beak (grp = 1) ----
+  {
+    const headStart = idx.length;
+    const hSegs = 20;
+    const hSpecs = [
+      { z: 0.56, y: 0.015, rx: 0.165, ry: 0.125, neck: 1.0, wrinkle: 0.012 },
+      { z: 0.68, y: 0.028, rx: 0.148, ry: 0.112, neck: 0.9, wrinkle: -0.010 },
+      { z: 0.79, y: 0.042, rx: 0.138, ry: 0.106, neck: 0.7, wrinkle: 0.011 },
+      { z: 0.89, y: 0.056, rx: 0.146, ry: 0.118, neck: 0.35, wrinkle: 0.0 },
+      { z: 1.00, y: 0.068, rx: 0.162, ry: 0.132, neck: 0.0, wrinkle: 0.0 }, // broad temporal skull
+      { z: 1.11, y: 0.066, rx: 0.148, ry: 0.122, neck: 0.0, wrinkle: 0.0 }, // orbital brow
+      { z: 1.21, y: 0.048, rx: 0.112, ry: 0.095, neck: 0.0, wrinkle: 0.0 }, // snout taper
+      { z: 1.29, y: 0.026, rx: 0.064, ry: 0.058, neck: 0.0, wrinkle: 0.0 }, // horny beak tip
+      { z: 1.33, y: 0.012, rx: 0.016, ry: 0.016, neck: 0.0, wrinkle: 0.0 },
+    ];
+    const hRings = [];
+    for (let hi = 0; hi < hSpecs.length; hi++) {
+      const hs = hSpecs[hi];
+      const ring = [];
+      for (let j = 0; j < hSegs; j++) {
+        const a = (j / hSegs) * Math.PI * 2;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        let rx = hs.rx + hs.wrinkle;
+        let ry = hs.ry + hs.wrinkle * 0.7;
+        let x = ca * rx;
+        let y = hs.y + sa * ry;
+        // Subtle raised brow ridge & recessed orbital pocket at hi == 5
+        if (hi === 5 && Math.abs(ca) > 0.65 && sa > -0.15 && sa < 0.65) {
+          const brow = sa > 0.25 ? 0.014 : -0.014;
+          x += Math.sign(ca) * brow;
+        }
+        // Subtle jaw beak line indentation along ventral snout
+        if (hi >= 5 && hi <= 7 && sa < -0.15 && sa > -0.45) {
+          x *= 0.94;
+        }
+        const plastW = sa < -0.35 ? Math.min(1.0, (-sa - 0.35) / 0.5) : 0.0;
+        ring.push(pushTV(x, y, hs.z, 0.0, plastW, hs.neck, 1));
+      }
+      hRings.push(ring);
+    }
+    for (let i = 0; i < hRings.length - 1; i++) {
+      for (let j = 0; j < hSegs; j++) {
+        const jn = (j + 1) % hSegs;
+        idx.push(hRings[i][j], hRings[i][jn], hRings[i + 1][jn], hRings[i][j], hRings[i + 1][jn], hRings[i + 1][j]);
+      }
+    }
+    const snoutCap = pushTV(0, 0.008, 1.345, 0, 0, 0, 1);
+    const neckCap = pushTV(0, 0.015, 0.54, 0, 0, 1, 1);
     for (let j = 0; j < hSegs; j++) {
-      const a = (j / hSegs) * Math.PI * 2;
-      ring.push([Math.cos(a) * hs.rx, hs.y + Math.sin(a) * hs.ry, hs.z]);
+      const jn = (j + 1) % hSegs;
+      idx.push(snoutCap, hRings[hRings.length - 1][j], hRings[hRings.length - 1][jn]);
+      idx.push(neckCap, hRings[0][jn], hRings[0][j]);
     }
-    headRings.push(ring);
+    ensureTurtleOutward(headStart);
   }
-  addLoft(headRings, 2.0, true);
 
-  // 3. Long Hydrofoil Fore-Flippers (left part = 3, right part = 4)
+  // ---- 3. Glossy Amber-Obsidian Reptilian Eyes in Orbital Sockets (Disconnected grp = 5) ----
+  const eyeGeo = new THREE.SphereGeometry(0.036, 14, 10);
+  const ePos = eyeGeo.getAttribute('position');
+  const eIdx = eyeGeo.index;
   for (const side of [-1, 1]) {
+    const baseV = pos.length / 3;
+    const ex = side * 0.128, ey = 0.088, ez = 1.115;
+    for (let i = 0; i < ePos.count; i++) {
+      pushTV(ex + ePos.getX(i) * 0.72, ey + ePos.getY(i) * 0.92, ez + ePos.getZ(i) * 1.05, 0, 0, 0, 5);
+    }
+    for (let i = 0; i < eIdx.count; i += 3) {
+      idx.push(baseV + eIdx.getX(i), baseV + eIdx.getX(i + 1), baseV + eIdx.getX(i + 2));
+    }
+  }
+  eyeGeo.dispose();
+
+  // ---- 4. Watertight Swept Hydrofoil Fore-Flippers (with Anterior Keratin Scale Ridge & Claw Nub) ----
+  for (const side of [-1, 1]) {
+    const flipStart = idx.length;
+    const fSegs = 18;
+    const fSec = 18;
     const fRings = [];
-    const fSec = 10;
-    const fSegs = 10;
+    const grpId = side < 0 ? 2 : 3;
+    let tipX = 0, tipY = 0, tipZ = 0;
+
     for (let i = 0; i <= fSegs; i++) {
-      const t = i / fSegs; // 0 = shoulder -> 1 = wingtip
-      const sx = side * (0.42 + t * 0.96);
-      const sweepZ = 0.44 - Math.pow(t, 1.35) * 0.56 + Math.sin(t * Math.PI) * 0.14;
-      const droopY = -0.02 - t * 0.06 + Math.sin(t * Math.PI) * 0.04;
-      const chord = (0.31 * Math.sin(Math.pow(t, 0.58) * Math.PI * 0.92) + 0.05) * (1.0 - t * 0.35);
-      const thick = (0.045 * (1.0 - t * 0.72) + 0.008);
+      const t = i / fSegs; // 0 = muscular shoulder -> 1 = tapered crescent tip
+      const sx = side * (0.40 + t * 1.04);
+      const sweepZ = 0.48 - Math.pow(t, 1.38) * 0.62 + Math.sin(t * Math.PI) * 0.16;
+      const droopY = -0.02 - t * 0.055 + Math.sin(t * Math.PI) * 0.045;
+      const chord = (0.33 * Math.sin(Math.pow(t, 0.56) * Math.PI * 0.92) + 0.045) * (1.0 - t * 0.34);
+      const tipTaper = t > 0.86 ? Math.cos(((t - 0.86) / 0.14) * Math.PI * 0.48) : 1.0;
+      const thick = (0.052 * (1.0 - t * 0.76) + 0.009) * tipTaper;
+      // Signature single sea-turtle anterior keratin claw nub around t ~ 0.34
+      const clawBump = Math.exp(-Math.pow((t - 0.34) / 0.045, 2.0)) * 0.032;
+
+      tipX = sx; tipY = droopY; tipZ = sweepZ;
       const ring = [];
       for (let j = 0; j < fSec; j++) {
         const a = (j / fSec) * Math.PI * 2;
-        const cz = Math.cos(a) * chord;
-        const cy = Math.sin(a) * thick;
-        ring.push([sx, droopY + cy, sweepZ + cz]);
+        const uChord = Math.cos(a) * 0.5 + 0.5; // 0 = thin scalloped trailing edge, 1 = thick scaled leading edge
+        const naca = Math.sin(Math.pow(uChord, 0.65) * Math.PI);
+        const sideSign = Math.sin(a) >= 0 ? 1 : -1;
+        const cz = (uChord - 0.5) * 2.0 * chord + (uChord > 0.88 ? clawBump : 0.0);
+        const cy = sideSign * naca * thick;
+        const edgeThin = Math.min(1.0, Math.max(1.0 - uChord / 0.32, (t - 0.72) / 0.28));
+        const plastW = sideSign < 0 ? 0.85 : 0.0;
+        ring.push(pushTV(sx, droopY + cy, sweepZ + cz, Math.max(0, edgeThin), plastW, 0, grpId));
       }
       fRings.push(ring);
     }
-    addLoft(fRings, side < 0 ? 3.0 : 4.0, side > 0);
+    for (let i = 0; i < fSegs; i++) {
+      for (let j = 0; j < fSec; j++) {
+        const jn = (j + 1) % fSec;
+        idx.push(fRings[i][j], fRings[i][jn], fRings[i + 1][jn], fRings[i][j], fRings[i + 1][jn], fRings[i + 1][j]);
+      }
+    }
+    // Cap wingtip & shoulder root
+    const tCap = pushTV(tipX, tipY, tipZ, 1.0, 0.0, 0, grpId);
+    const rCap = pushTV(side * 0.38, -0.02, 0.46, 0.0, 0.0, 0, grpId);
+    for (let j = 0; j < fSec; j++) {
+      const jn = (j + 1) % fSec;
+      idx.push(tCap, fRings[fSegs][j], fRings[fSegs][jn]);
+      idx.push(rCap, fRings[0][jn], fRings[0][j]);
+    }
+    ensureTurtleOutward(flipStart);
   }
 
-  // 4. Rear Steering Hind Flippers (part = 5)
+  // ---- 5. Watertight Steering Hind Flippers & Short Conical Tail (grp = 4) ----
   for (const side of [-1, 1]) {
+    const hStart = idx.length;
+    const rSegs = 10;
+    const rSec = 12;
     const rRings = [];
-    const rSec = 8;
-    const rSegs = 6;
     for (let i = 0; i <= rSegs; i++) {
       const t = i / rSegs;
-      const sx = side * (0.24 + t * 0.32);
-      const sz = -0.68 - t * 0.54;
-      const sy = -0.03 - t * 0.02;
-      const halfW = (0.14 * Math.sin(Math.pow(t, 0.65) * Math.PI * 0.88) + 0.035);
-      const thick = 0.026 * (1.0 - t * 0.65) + 0.006;
+      const sx = side * (0.24 + t * 0.34);
+      const sz = -0.68 - t * 0.56;
+      const sy = -0.03 - t * 0.025;
+      const halfW = (0.155 * Math.sin(Math.pow(t, 0.62) * Math.PI * 0.88) + 0.032);
+      const thick = (0.028 * (1.0 - t * 0.68) + 0.006) * (t > 0.86 ? 0.5 : 1.0);
       const ring = [];
       for (let j = 0; j < rSec; j++) {
         const a = (j / rSec) * Math.PI * 2;
-        ring.push([sx + Math.cos(a) * halfW * 0.55, sy + Math.sin(a) * thick, sz + Math.cos(a) * halfW * 0.45]);
+        const ca = Math.cos(a), sa = Math.sin(a);
+        const edgeThin = Math.max(0.0, (t - 0.65) / 0.35);
+        ring.push(pushTV(sx + ca * halfW * 0.58, sy + sa * thick, sz + ca * halfW * 0.42, edgeThin, sa < -0.2 ? 0.8 : 0.0, 0, 4));
       }
       rRings.push(ring);
     }
-    addLoft(rRings, 5.0, side > 0);
+    for (let i = 0; i < rSegs; i++) {
+      for (let j = 0; j < rSec; j++) {
+        const jn = (j + 1) % rSec;
+        idx.push(rRings[i][j], rRings[i][jn], rRings[i + 1][jn], rRings[i][j], rRings[i + 1][jn], rRings[i + 1][j]);
+      }
+    }
+    const hTip = pushTV(side * 0.58, -0.055, -1.25, 1.0, 0.0, 0, 4);
+    const hRoot = pushTV(side * 0.24, -0.03, -0.68, 0.0, 0.0, 0, 4);
+    for (let j = 0; j < rSec; j++) {
+      const jn = (j + 1) % rSec;
+      idx.push(hTip, rRings[rSegs][j], rRings[rSegs][jn]);
+      idx.push(hRoot, rRings[0][jn], rRings[0][j]);
+    }
+    ensureTurtleOutward(hStart);
   }
 
-  // Small tail tip
-  pushTri(-0.04, -0.01, -0.84, 0.04, -0.01, -0.84, 0.0, -0.02, -1.04, 5.0);
+  // ---- 6. 5 Miniature Epibiont Turtle Barnacles (Chelonibia testudinaria) on Rear Carapace (grp = 6) ----
+  const tBarnacles = [
+    [0.16, 0.255, -0.34, 0.044],
+    [-0.22, 0.232, -0.44, 0.038],
+    [0.08, 0.228, -0.54, 0.032],
+    [-0.14, 0.285, -0.14, 0.030],
+    [0.28, 0.195, -0.46, 0.028],
+  ];
+  for (const [bx, by, bz, br] of tBarnacles) {
+    const bStart = idx.length;
+    const sides = 7;
+    const h = br * 0.45;
+    const bRing = [], tRing = [];
+    for (let s = 0; s < sides; s++) {
+      const a = (s / sides) * Math.PI * 2;
+      const rib = 1.0 + 0.12 * Math.cos(a * 6.0);
+      bRing.push(pushTV(bx + Math.cos(a) * br * rib, by - 0.01, bz + Math.sin(a) * br * rib, 0.0, 0, 0, 6));
+      tRing.push(pushTV(bx + Math.cos(a) * br * 0.42 * rib, by + h, bz + Math.sin(a) * br * 0.42 * rib, 1.0, 0, 0, 6));
+    }
+    const ctr = pushTV(bx, by + h * 0.5, bz, 0.0, 0, 0, 6);
+    for (let s = 0; s < sides; s++) {
+      const ns = (s + 1) % sides;
+      idx.push(bRing[s], bRing[ns], tRing[ns], bRing[s], tRing[ns], tRing[s]);
+      idx.push(tRing[s], tRing[ns], ctr);
+    }
+    ensureTurtleOutward(bStart);
+  }
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(norm, 3));
-  geo.setAttribute('aTPart', new THREE.Float32BufferAttribute(part, 1));
+  geo.setAttribute('aTMatW', new THREE.Float32BufferAttribute(matW, 4));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   return geo;
@@ -3734,27 +3965,28 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
   group.add(mantaMesh);
   shadowGroup.add(mantaShadowMesh);
 
-  // ---- 2. 4,240 Schooling Reef Fish (Direct Port of abyssal-garden SCH, vsFish & fsFish) ----
+  // ---- 2. 4,240 GTA-6-Grade Multi-Species Iridescent Schooling Reef Fish ----
   const fishBaseGeo = buildFishGeometry();
   const fishGeo = new THREE.InstancedBufferGeometry();
   fishGeo.index = fishBaseGeo.index;
   fishGeo.attributes.position = fishBaseGeo.attributes.position;
   fishGeo.attributes.normal = fishBaseGeo.attributes.normal;
+  fishGeo.attributes.aFishPart = fishBaseGeo.attributes.aFishPart;
 
   rseed(14);
   const SCH = [
-    [-2, -36, -10, 15, 520, 0.3, 1, 0.945],
-    [8, -30, -70, 22, 420, 0.32, -1],
-    [48, -30, 14, 18, 360, 0.3, 1],
-    [-58, -30, -8, 11, 420, 0.28, -1, 0.3],
-    [8, -36, 84, 16, 320, 0.28, 1],
-    [-90, -28, -70, 25, 300, 0.3, 1],
-    [95, -30, 70, 25, 300, 0.3, -1],
-    [0, -22, 20, 30, 380, 0.34, -1],
-    [-30, -30, -100, 18, 300, 0.3, 1],
-    [16, -36, 30, 12, 300, 0.3, 1],
-    [-48, -34, -58, 12, 300, 0.3, -1],
-    [-45, -35, 38, 14, 320, 0.3, 1],
+    [-2, -34, -10, 14, 480, 0.36, 1, 0.945, 0],  // Main Canyon Floor: Blue-Green Reef Chromis & Fusiliers
+    [4, -20.5, -1, 10.5, 360, 0.38, -1, 0.32, 1], // Main Canyon Hero Mid-Water: Sunset Coral Anthias (Vista 1!)
+    [58.5, -22.0, 9.5, 9.5, 380, 0.38, 1, 0.18, 2], // Shipwreck Cove Hero: Golden Blue-Striped Snappers orbiting Galleon (Vista 3!)
+    [-56, -34, -4, 10, 420, 0.36, -1, 0.3, 1],   // Sponge Canyon: Sunset Coral Anthias
+    [8, -35, 84, 15, 320, 0.36, 1, 0.62, 3],     // Purple Grotto Outer Lagoon: Regal Blue Tangs
+    [-90, -28, -70, 25, 300, 0.36, 1, 0.25, 4],  // Outer Reef: Mirror-Chrome Baitball Jacks
+    [95, -30, 70, 25, 300, 0.36, -1, 0.78, 0],   // Blue-Green Fusiliers
+    [0, -18.5, 6, 18, 380, 0.40, -1, 0.68, 4],   // Upper Canyon Sunlit Baitball: Mirror-Chrome Jacks (Vista 1!)
+    [-30, -30, -100, 18, 300, 0.36, 1, 0.18, 1], // Sunset Anthias
+    [16, -35, 30, 12, 300, 0.36, 1, 0.85, 3],    // Regal Blue Tangs
+    [-48, -34, -58, 12, 300, 0.36, -1, 0.33, 2], // Blue-Striped Snappers
+    [-19, -20.5, 19, 10, 320, 0.36, 1, 0.45, 2], // Giant Sea Fan Wall: Golden Blue-Striped Snappers (Vista 9!)
   ];
 
   const totalFish = SCH.reduce((s, a) => s + a[4], 0);
@@ -3762,11 +3994,13 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
 
   const fCenter = new Float32Array(totalFish * 4); // cx, cy, cz, R
   const fMeta = new Float32Array(totalFish * 4); // seed, angVel, size, schoolPhase
+  const fSpecies = new Float32Array(totalFish); // 0=Chromis/Fusilier, 1=Coral Anthias, 2=Blue-Striped Snapper, 3=Regal Blue Tang, 4=Chrome Jack
 
   let fi = 0;
   for (let si = 0; si < SCH.length; si++) {
     const s = SCH[si];
     const ss = s[7] === undefined ? rnd() : s[7];
+    const spId = s[8] === undefined ? (si % 5) : s[8];
     for (let i = 0; i < s[4]; i++) {
       const i4 = fi * 4;
       fCenter[i4] = s[0];
@@ -3778,23 +4012,29 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
       fMeta[i4 + 1] = (s[6] * 1.9) / s[3];
       fMeta[i4 + 2] = s[5];
       fMeta[i4 + 3] = ss;
+      fSpecies[fi] = spId;
       fi++;
     }
   }
 
   fishGeo.setAttribute('iFCenter', new THREE.InstancedBufferAttribute(fCenter, 4));
   fishGeo.setAttribute('iFMeta', new THREE.InstancedBufferAttribute(fMeta, 4));
+  fishGeo.setAttribute('iFSpecies', new THREE.InstancedBufferAttribute(fSpecies, 1));
   fishGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, -25, 0), 260);
 
   const fishVs = /* glsl */ `
+    attribute float aFishPart;
     attribute vec4 iFCenter;
     attribute vec4 iFMeta;
+    attribute float iFSpecies;
     ${MEDIUM_GLSL}
 
     out vec3 vWPos;
     out vec3 vWNorm;
     out vec3 vOrigPos;
     flat out float vSeed;
+    flat out float vSpecies;
+    out float vFishPart;
     out float vShadow;
 
     float hsFish(float p) {
@@ -3822,7 +4062,6 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
       float panic = 0.0;
       float swimSpd = min(length(uSwimmerVel), 9.0);
 
-      // 1. Diver threat
       vec3 dCam = baseP - uCamPos;
       float camLen = length(dCam);
       float camRad = 7.8 + swimSpd * 0.42;
@@ -3830,13 +4069,11 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
         float f = smoothstep(camRad, 1.2, camLen);
         float f2 = f * f;
         vec3 away = camLen > 0.05 ? (dCam / camLen) : vec3(0.0, 0.4, 0.9);
-        // Individual scatter jitter so fish fan outward organically
         vec3 swirl = normalize(away + (h - 0.5) * 0.55);
         evade += swirl * (f2 * (4.4 + swimSpd * 0.25));
         panic = max(panic, f);
       }
 
-      // 2. Patrol Shark threat
       if (uSharkWake.w > 0.1) {
         vec3 dSh = baseP - uSharkWake.xyz;
         float shLen = length(dSh);
@@ -3847,7 +4084,6 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
         }
       }
 
-      // 3. Colossal Mother & Calf Whales
       if (uWhaleBody0.w > 0.1) {
         vec3 dW0 = baseP - uWhaleBody0.xyz;
         float w0Len = length(dW0);
@@ -3869,13 +4105,11 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
 
       if (panic > 0.005) {
         baseP += evade;
-        // Clamp below ocean surface so evading fish never jump into air
         baseP.y = min(baseP.y, -1.6);
         vec3 escDir = normalize(evade + T * 0.45);
         T = normalize(mix(T, escDir, clamp(panic * 0.82, 0.0, 0.85)));
         S = normalize(cross(vec3(0.0, 1.0, 0.0), T) + vec3(1e-4));
         Up = cross(T, S);
-        // Defensive banking roll while darting away
         float bank = clamp(dot(evade, S) * 0.18, -0.65, 0.65) * panic;
         float cb = cos(bank);
         float sb = sin(bank);
@@ -3887,13 +4121,21 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
       vec3 l = position * iFMeta.z * (0.75 + 0.5 * h.z);
       float tailFreq = 9.0 + panic * 11.5;
       float tailAmp = 0.22 + panic * 0.16;
-      l.z += sin(t * tailFreq + s * 50.0 + l.x * 5.0) * tailAmp * (0.25 * iFMeta.z - l.x);
+      // Smooth carangiform tail bend + agile pectoral fin flutter
+      float bendWeight = max(0.0, 0.28 * iFMeta.z - l.x);
+      l.z += sin(t * tailFreq + s * 50.0 + l.x * 5.2) * tailAmp * bendWeight;
+      if (aFishPart > 0.5 && aFishPart < 1.5 && abs(position.z) > 0.07) {
+        l.x += sin(t * (tailFreq * 1.35) + s * 28.0) * 0.032 * iFMeta.z * abs(position.z);
+      }
+
       vec3 w = baseP + T * l.x + Up * l.y + S * l.z;
 
       vWPos = w;
       vWNorm = normalize(T * normal.x + Up * normal.y + S * normal.z);
       vOrigPos = position;
       vSeed = s;
+      vSpecies = iFSpecies;
+      vFishPart = aFishPart;
       vShadow = shadow1(w);
       gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
     }
@@ -3907,6 +4149,8 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
     in vec3 vWNorm;
     in vec3 vOrigPos;
     flat in float vSeed;
+    flat in float vSpecies;
+    in float vFishPart;
     in float vShadow;
     layout(location = 0) out vec4 fragColor;
 
@@ -3917,13 +4161,84 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
       vec3 V = normalize(uCamPos - vWPos);
       vec4 vv = vol(vWPos);
 
-      // Direct port of abyssal-garden fsFish (cerulean-silver countershading + 14% golden-yellow morphs)
-      vec3 alb = mix(vec3(0.50, 0.68, 0.80), vec3(0.10, 0.22, 0.40), ss(-0.05, 0.20, vOrigPos.y));
-      alb = mix(alb, vec3(0.95, 0.80, 0.30), step(0.86, fract(vSeed * 7.7)) * 0.6);
+      float isEye = step(2.5, vFishPart);
+      float isTail = step(1.5, vFishPart) * step(vFishPart, 2.5);
+      float isFin = step(0.5, vFishPart) * step(vFishPart, 2.5);
+
+      // Overlapping cycloid fish-scale metallic diamond micro-grid
+      float scU = vOrigPos.x * 46.0;
+      float scV = vOrigPos.y * 54.0 + floor(scU) * 0.5;
+      float scaleCell = sin(scU * 3.14159) * sin(scV * 3.14159);
+      float scaleGlint = smoothstep(0.15, 0.85, scaleCell * 0.5 + 0.5);
+      // Subtle curved gill operculum crease line on head flank
+      float gillCrease = exp(-pow((vOrigPos.x - 0.25 + vOrigPos.y * vOrigPos.y * 2.2) / 0.016, 2.0)) * (1.0 - isFin) * (1.0 - isEye);
+
+      vec3 alb;
+      vec3 finCol;
+      float specBoost = 0.68;
+
+      if (vSpecies < 0.5) {
+        // 0: Iridescent Blue-Green Reef Chromis & Fusiliers (deep cerulean-turquoise back -> silver belly -> golden tail)
+        vec3 dorsal = vec3(0.03, 0.24, 0.46);
+        vec3 belly = vec3(0.42, 0.56, 0.64);
+        alb = mix(belly, dorsal, ss(-0.06, 0.14, vOrigPos.y));
+        float goldStripe = exp(-pow((vOrigPos.y - 0.055) / 0.032, 2.0));
+        alb = mix(alb, vec3(0.84, 0.58, 0.06), goldStripe * 0.82);
+        finCol = mix(vec3(0.12, 0.46, 0.62), vec3(0.88, 0.62, 0.08), isTail * 0.82);
+      } else if (vSpecies < 1.5) {
+        // 1: Radiant Sunset Coral Anthias (deep vibrant tangerine-coral -> magenta flank -> crimson-gold fins)
+        vec3 dorsal = vec3(0.82, 0.18, 0.04);
+        vec3 belly = vec3(0.88, 0.44, 0.22);
+        alb = mix(belly, dorsal, ss(-0.08, 0.14, vOrigPos.y));
+        alb = mix(alb, vec3(0.68, 0.10, 0.34), ss(-0.14, 0.02, vOrigPos.y) * (1.0 - ss(0.04, 0.12, vOrigPos.y)) * 0.65);
+        finCol = mix(vec3(0.85, 0.34, 0.06), vec3(0.76, 0.12, 0.36), isTail * 0.68);
+        specBoost = 0.62;
+      } else if (vSpecies < 2.5) {
+        // 2: Blue-Striped Golden Reef Snappers (Lutjanus kasmira — rich saffron gold + 4 crisp electric-blue stripes!)
+        alb = mix(vec3(0.62, 0.56, 0.32), vec3(0.86, 0.58, 0.03), ss(-0.10, 0.07, vOrigPos.y));
+        float stripes = smoothstep(0.54, 0.82, sin(vOrigPos.y * 88.0 - vOrigPos.x * 4.5));
+        alb = mix(alb, vec3(0.06, 0.42, 0.86), stripes * ss(-0.06, 0.02, vOrigPos.y) * 0.92);
+        finCol = vec3(0.84, 0.60, 0.05);
+      } else if (vSpecies < 3.5) {
+        // 3: Regal Blue Tang (Paracanthurus hepatus — deep royal cobalt blue + jet-black saddle + canary-yellow tail!)
+        alb = vec3(0.03, 0.15, 0.62);
+        float saddle = smoothstep(0.06, -0.02, abs(vOrigPos.y - 0.06)) * smoothstep(0.22, 0.05, vOrigPos.x) * smoothstep(-0.34, -0.18, vOrigPos.x);
+        alb = mix(alb, vec3(0.02, 0.025, 0.04), saddle * 0.94);
+        finCol = mix(vec3(0.02, 0.10, 0.46), vec3(0.90, 0.70, 0.04), isTail);
+      } else {
+        // 4: Mirror-Chrome Silver Baitball Jacks (deep steel-blue back -> gleaming silver-platinum flanks!)
+        alb = mix(vec3(0.46, 0.56, 0.64), vec3(0.08, 0.18, 0.30), ss(-0.02, 0.16, vOrigPos.y));
+        finCol = vec3(0.32, 0.44, 0.52);
+        specBoost = 1.35;
+      }
+
+      // Fin rays & translucent dorsal/pectoral/tail fin shading
+      float finRays = 0.74 + 0.26 * sin(vOrigPos.y * 85.0 + vOrigPos.x * 60.0);
+      alb = mix(alb * (0.86 + 0.22 * scaleGlint) * (1.0 - gillCrease * 0.52), finCol * finRays, isFin);
+
+      // Glossy Fish Eye: golden-silver iris ring + crisp jet-black pupil
+      if (isEye > 0.5) {
+        float eyeD = length(vec2(vOrigPos.x - 0.355, vOrigPos.y - 0.038)) / 0.028;
+        float pupil = 1.0 - smoothstep(0.42, 0.60, eyeD);
+        alb = mix(vec3(0.76, 0.64, 0.28), vec3(0.01, 0.012, 0.016), pupil);
+        specBoost = 1.65;
+      }
 
       vec3 E = sunE(vWPos) * vShadow;
-      vec3 c = alb * (E * (0.25 + 0.75 * sat(dot(n, L))) + amb(vWPos, n) * 1.3);
-      c += E * pow(sat(dot(n, normalize(V + L))), 24.0) * 1.6 + vec3(0.3, 0.6, 0.7) * pow(1.0 - sat(dot(n, V)), 3.0) * 0.25 * vv.g;
+      float ca = caus(vWPos);
+      float ndl = sat(dot(n, L));
+      vec3 H = normalize(V + L);
+      float spec = pow(sat(dot(n, H)), mix(30.0, 64.0, scaleGlint)) * specBoost * (0.55 + 0.75 * scaleGlint);
+      // Translucent fin-edge backlit glow + iridescent scale Fresnel flash (calibrated for ACES — zero white blowout!)
+      float rim = pow(1.0 - sat(dot(n, V)), 3.0);
+      float backLight = pow(sat(dot(-V, L + n * 0.35)), 2.8);
+      vec3 finSSS = finCol * E * backLight * isFin * 0.42;
+      vec3 direct = E * (0.20 + 0.72 * ndl) * (0.62 + 0.58 * ca);
+      vec3 ambCol = amb(vWPos, n) * 0.92 + sideLight(vWPos, n) * 0.70;
+      vec3 fluor = alb * dot(direct + ambCol, vec3(0.08, 0.38, 0.42)) * (1.0 - isEye) * 0.16;
+
+      vec3 c = alb * (direct + ambCol) + fluor;
+      c += E * spec + mix(vec3(0.24, 0.62, 0.78), alb, 0.55) * rim * 0.24 * vv.g + finSSS;
       fragColor = vec4(fog(c, vWPos), 1.0);
     }
   `;
@@ -3956,7 +4271,7 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
     const a = anchors[ai];
     const perColony = ai < 10 ? 3 : 2;
     for (let k = 0; k < perColony && clownRecords.length < 116; k++) {
-      const sz = 0.22 + rnd() * 0.10;
+      const sz = 0.24 + rnd() * 0.11;
       const rad = (0.42 + rnd() * 0.44) * Math.max(0.7, a[3] || 0.85);
       const speed = (1.15 + rnd() * 0.85) * (k % 2 === 0 ? 1 : -1);
       const hOff = 0.46 + rnd() * 0.48;
@@ -3968,6 +4283,7 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
   clownGeo.index = fishBaseGeo.index;
   clownGeo.attributes.position = fishBaseGeo.attributes.position;
   clownGeo.attributes.normal = fishBaseGeo.attributes.normal;
+  clownGeo.attributes.aFishPart = fishBaseGeo.attributes.aFishPart;
   clownGeo.instanceCount = nClownfish;
 
   const cAnchorArr = new Float32Array(nClownfish * 4);
@@ -3989,12 +4305,14 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
   clownGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, -25, 0), 220);
 
   const clownVs = /* glsl */ `
+    attribute float aFishPart;
     attribute vec4 iCAnchor;
     attribute vec4 iCMeta;
     ${MEDIUM_GLSL}
     out vec3 vWPos;
     out vec3 vWNorm;
     out vec3 vOrigPos;
+    out float vFishPart;
     out float vShadow;
 
     void main() {
@@ -4004,7 +4322,6 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
       float baseH = iCMeta.w;
       float t = uTime;
 
-      // Dive down into anemone tentacles for shelter when diver approaches < 5.0m
       float camDist = distance(iCAnchor.xyz, uCamPos);
       float shelter = 1.0 - smoothstep(1.6, 5.2, camDist);
 
@@ -4012,7 +4329,6 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
       float orbitR = iCAnchor.w * mix(1.0, 0.34, shelter);
       float curH = mix(baseH + 0.16 * sin(t * 2.1 + s * 19.0), 0.16 + 0.08 * sin(t * 5.0 + s * 12.0), shelter);
 
-      // Lively figure-8 / eccentric reef orbit above home anemone
       vec3 off = vec3(
         cos(ph) * orbitR,
         curH,
@@ -4028,14 +4344,14 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
       vec3 Up = cross(T, S);
 
       vec3 l = position * sz;
-      // Energetic clownfish wiggling swim stroke
       float wigFreq = 13.5 + shelter * 8.0;
-      l.z += sin(t * wigFreq + s * 40.0 + l.x * 6.5) * 0.28 * (0.25 * sz - l.x);
+      l.z += sin(t * wigFreq + s * 40.0 + l.x * 6.5) * 0.28 * max(0.0, 0.28 * sz - l.x);
       vec3 w = iCAnchor.xyz + off + T * l.x + Up * l.y + S * l.z;
 
       vWPos = w;
       vWNorm = normalize(T * normal.x + Up * normal.y + S * normal.z);
       vOrigPos = position;
+      vFishPart = aFishPart;
       vShadow = shadow1(w);
       gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
     }
@@ -4048,6 +4364,7 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
     in vec3 vWPos;
     in vec3 vWNorm;
     in vec3 vOrigPos;
+    in float vFishPart;
     in float vShadow;
     layout(location = 0) out vec4 fragColor;
 
@@ -4057,29 +4374,38 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
       vec3 L = uSunDir;
       vec3 V = normalize(uCamPos - vWPos);
 
-      // Iconic Amphiprion ocellaris bright orange with 3 crisp black-edged white bands
-      float x = vOrigPos.x; // nose ~+0.50 -> tail ~-0.65
-      float bHead = smoothstep(0.16, 0.19, x) * (1.0 - smoothstep(0.28, 0.31, x));
-      float bMid  = smoothstep(-0.14, -0.10, x) * (1.0 - smoothstep(0.02, 0.06, x));
-      float bTail = smoothstep(-0.44, -0.41, x) * (1.0 - smoothstep(-0.34, -0.31, x));
-      float whiteBand = clamp(bHead + bMid + bTail, 0.0, 1.0);
+      float isEye = step(2.5, vFishPart);
+      float isFin = step(0.5, vFishPart) * step(vFishPart, 2.5);
 
-      float eHead = smoothstep(0.13, 0.17, x) * (1.0 - smoothstep(0.30, 0.34, x));
-      float eMid  = smoothstep(-0.17, -0.12, x) * (1.0 - smoothstep(0.04, 0.09, x));
-      float eTail = smoothstep(-0.47, -0.43, x) * (1.0 - smoothstep(-0.32, -0.28, x));
-      float blackEdge = clamp((eHead + eMid + eTail) - whiteBand, 0.0, 1.0);
+      float x = vOrigPos.x;
+      float bHead = smoothstep(0.17, 0.20, x) * (1.0 - smoothstep(0.28, 0.31, x));
+      float bMid  = smoothstep(-0.13, -0.09, x) * (1.0 - smoothstep(0.03, 0.07, x));
+      float bTail = smoothstep(-0.37, -0.34, x) * (1.0 - smoothstep(-0.27, -0.24, x));
+      float whiteBand = clamp(bHead + bMid + bTail, 0.0, 1.0) * (1.0 - isFin);
 
-      vec3 orange = mix(vec3(0.95, 0.34, 0.04), vec3(0.98, 0.48, 0.07), smoothstep(-0.12, 0.14, vOrigPos.y));
-      vec3 alb = mix(orange, vec3(0.05, 0.05, 0.06), blackEdge * 0.92);
-      alb = mix(alb, vec3(0.94, 0.96, 0.98), whiteBand);
-      // Black fin edging at dorsal/ventral fringes
-      float finTrim = smoothstep(0.17, 0.24, abs(vOrigPos.y)) * 0.72;
-      alb = mix(alb, vec3(0.04, 0.04, 0.05), finTrim);
+      float eHead = smoothstep(0.14, 0.18, x) * (1.0 - smoothstep(0.30, 0.34, x));
+      float eMid  = smoothstep(-0.16, -0.11, x) * (1.0 - smoothstep(0.05, 0.10, x));
+      float eTail = smoothstep(-0.40, -0.36, x) * (1.0 - smoothstep(-0.25, -0.21, x));
+      float blackEdge = clamp((eHead + eMid + eTail) - whiteBand, 0.0, 1.0) * (1.0 - isFin);
+
+      vec3 orange = mix(vec3(0.95, 0.34, 0.04), vec3(0.99, 0.50, 0.07), smoothstep(-0.12, 0.14, vOrigPos.y));
+      vec3 alb = mix(orange, vec3(0.04, 0.04, 0.05), blackEdge * 0.94);
+      alb = mix(alb, vec3(0.95, 0.97, 0.99), whiteBand);
+
+      // Iconic black-trimmed translucent orange clownfish fins
+      if (isFin > 0.5) {
+        float edgeTrim = smoothstep(0.18, 0.26, abs(vOrigPos.y)) + smoothstep(0.16, 0.22, abs(vOrigPos.z)) + smoothstep(-0.54, -0.64, vOrigPos.x);
+        alb = mix(orange * 1.05, vec3(0.03, 0.03, 0.04), clamp(edgeTrim, 0.0, 0.92));
+      }
+      if (isEye > 0.5) {
+        float eyeD = length(vec2(vOrigPos.x - 0.355, vOrigPos.y - 0.038)) / 0.028;
+        alb = mix(vec3(0.92, 0.56, 0.12), vec3(0.015, 0.02, 0.025), 1.0 - smoothstep(0.44, 0.62, eyeD));
+      }
 
       vec3 E = sunE(vWPos) * vShadow;
       float ca = caus(vWPos);
       vec3 c = alb * (E * (0.30 + 0.78 * sat(dot(n, L))) * (0.75 + 0.75 * ca) + amb(vWPos, n) * 1.35 + sideLight(vWPos, n));
-      c += E * pow(sat(dot(n, normalize(V + L))), 28.0) * 0.65;
+      c += E * pow(sat(dot(n, normalize(V + L))), 32.0) * mix(0.72, 2.2, isEye);
       fragColor = vec4(fog(c, vWPos), 1.0);
     }
   `;
@@ -4095,23 +4421,23 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
   clownMesh.frustumCulled = false;
   group.add(clownMesh);
 
-  // ---- 4. 4 Gliding Green Sea Turtles (Chelonia mydas) with Figure-8 Rowing Flippers ----
+  // ---- 4. 4 GTA-6-Grade Gliding Green Sea Turtles (Chelonia mydas) ----
   const turtleBaseGeo = buildSeaTurtleGeometry();
   const turtleGeo = new THREE.InstancedBufferGeometry();
   turtleGeo.index = turtleBaseGeo.index;
   turtleGeo.attributes.position = turtleBaseGeo.attributes.position;
   turtleGeo.attributes.normal = turtleBaseGeo.attributes.normal;
-  turtleGeo.attributes.aTPart = turtleBaseGeo.attributes.aTPart;
+  turtleGeo.attributes.aTMatW = turtleBaseGeo.attributes.aTMatW;
 
   const turtleSpecs = [
     // Main Coral Canyon cruiser (visible in Vista 1)
-    { cx: -2.0, cy: -17.5, cz: -4.0, rx: 14.0, rz: 15.0, speed: 0.115, scale: 1.18, ph: 0.4 },
+    { cx: -2.0, cy: -17.5, cz: -4.0, rx: 14.0, rz: 15.0, speed: 0.115, scale: 1.22, ph: 0.4 },
     // Giant Sea Fan Wall glider (visible in Vista 9)
-    { cx: -14.0, cy: -18.5, cz: 18.0, rx: 12.0, rz: 12.0, speed: 0.105, scale: 1.08, ph: 2.2 },
+    { cx: -14.0, cy: -18.5, cz: 18.0, rx: 12.0, rz: 12.0, speed: 0.105, scale: 1.12, ph: 2.2 },
     // WWII Fighter Wreck Reef patroller (visible in Vista 8)
-    { cx: 69.0, cy: -24.0, cz: -24.0, rx: 14.0, rz: 12.0, speed: 0.12, scale: 1.12, ph: 4.1 },
-    // Sunken Shipwreck Cove cruiser (visible in Vista 3)
-    { cx: 56.0, cy: -18.0, cz: 10.0, rx: 15.0, rz: 14.0, speed: 0.10, scale: 1.04, ph: 5.3 },
+    { cx: 69.0, cy: -24.0, cz: -24.0, rx: 14.0, rz: 12.0, speed: 0.12, scale: 1.15, ph: 4.1 },
+    // Sunken Galleon Shipwreck Cove cruiser (visible in Vista 3)
+    { cx: 56.0, cy: -18.5, cz: 11.0, rx: 14.0, rz: 13.0, speed: 0.10, scale: 1.14, ph: 5.3 },
   ];
   const nTurtles = turtleSpecs.length;
   turtleGeo.instanceCount = nTurtles;
@@ -4128,7 +4454,7 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
   turtleGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, -18, 0), 220);
 
   const turtleVs = /* glsl */ `
-    attribute float aTPart;
+    attribute vec4 aTMatW;
     attribute vec4 iTOrbit;
     attribute vec4 iTParams;
     ${MEDIUM_GLSL}
@@ -4136,7 +4462,8 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
     out vec3 vWPos;
     out vec3 vWNorm;
     out vec3 vLPos;
-    flat out float vTPart;
+    out vec3 vLNorm;
+    out vec4 vTMatW;
 
     vec3 turtlePosAt(float t, vec4 orb, vec4 prm) {
       float a = t * prm.y + prm.w;
@@ -4164,34 +4491,42 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
 
       vec3 lp = position;
       vec3 ln = normal;
+      float grp = aTMatW.w;
       float strokePh = uTime * 1.85 + iTParams.w * 2.3;
-      // Asymmetric graceful sea-turtle glide: strong downstroke, calm glide recovery
-      float flap = sin(strokePh) + 0.22 * sin(strokePh * 2.0 - 0.6);
+      // Asymmetric graceful sea-turtle flight: strong power downstroke + serene glide recovery
+      float flap = sin(strokePh) + 0.24 * sin(strokePh * 2.0 - 0.65);
       float sweep = cos(strokePh);
 
-      if (aTPart > 2.5 && aTPart < 4.5) {
-        // Fore-flippers: figure-8 hydrofoil rowing stroke anchored at shoulder (|x| ~ 0.42)
-        float side = aTPart < 3.5 ? -1.0 : 1.0;
+      if (grp > 1.5 && grp < 3.5) {
+        // Hydrofoil Fore-Flippers: figure-8 underwater rowing stroke with aeroelastic wingtip flex lag
+        float side = grp < 2.5 ? -1.0 : 1.0;
         float span = max(0.0, abs(lp.x) - 0.38);
-        float tipFlex = pow(span, 1.35);
-        float pitchTwist = sweep * 0.32 * min(1.0, span * 1.2);
-        float dy = flap * 0.52 * span - cos(strokePh) * 0.09 * tipFlex;
-        float dz = sweep * 0.26 * span;
-        lp.y += dy + (lp.z - 0.30) * pitchTwist * 0.45;
+        float tipFlex = pow(span, 1.45);
+        float lagFlap = sin(strokePh - span * 0.65) + 0.24 * sin((strokePh - span * 0.65) * 2.0 - 0.65);
+        float pitchTwist = sweep * 0.34 * min(1.0, span * 1.25);
+        float dy = lagFlap * 0.54 * span - cos(strokePh) * 0.08 * tipFlex;
+        float dz = sweep * 0.28 * span;
+        lp.y += dy + (lp.z - 0.34) * pitchTwist * 0.48;
         lp.z += dz;
-        lp.x -= side * abs(flap) * 0.10 * span;
-        ln = normalize(ln + vec3(-side * flap * 0.35 * span, 0.0, -sweep * 0.22));
-      } else if (aTPart > 4.5) {
-        // Hind flippers: subtle steering trim
-        lp.y += sin(strokePh - 1.2) * 0.05 * max(0.0, -lp.z - 0.68);
-      } else if (aTPart > 1.5 && aTPart < 2.5) {
-        // Head & neck gentle breathing lift
-        float neck = smoothstep(0.68, 1.22, lp.z);
-        lp.y += sin(strokePh * 0.5) * 0.045 * neck;
+        lp.x -= side * abs(lagFlap) * 0.11 * span;
+        ln = normalize(ln + vec3(-side * lagFlap * 0.36 * span, 0.0, -sweep * 0.22));
+      } else if (grp > 3.5 && grp < 4.5) {
+        // Rear Steering Hind Flippers: delicate hydroplane trim
+        lp.y += sin(strokePh - 1.25) * 0.055 * max(0.0, -lp.z - 0.66);
+      } else if ((grp > 0.5 && grp < 1.5) || (grp > 4.5 && grp < 5.5)) {
+        // Head, Neck & Glossy Eyes: gentle breathing lift + curious slight glance toward nearby diver
+        float neck = smoothstep(0.60, 1.26, lp.z);
+        vec3 toCam = uCamPos - p0;
+        float camD = length(toCam);
+        float lookStr = smoothstep(14.0, 3.0, camD) * smoothstep(-0.2, 0.4, dot(normalize(toCam + vec3(1e-4)), fwd));
+        float yawLook = clamp(dot(normalize(toCam + vec3(1e-4)), rBank) * 0.22, -0.18, 0.18) * lookStr;
+        float pitchLook = clamp(dot(normalize(toCam + vec3(1e-4)), uBank) * 0.14, -0.10, 0.10) * lookStr;
+        lp.x += yawLook * neck * 0.36;
+        lp.y += (sin(strokePh * 0.5) * 0.042 + pitchLook * 0.28) * neck;
       }
 
       // Subtle body heave synchronized with flipper power stroke
-      lp.y -= flap * 0.055;
+      lp.y -= flap * 0.052;
       lp *= iTParams.z;
 
       vec3 wp = p0 + basis * lp;
@@ -4200,7 +4535,8 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
       vWPos = wp;
       vWNorm = wn;
       vLPos = position;
-      vTPart = aTPart;
+      vLNorm = normal;
+      vTMatW = aTMatW;
       gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
     }
   `;
@@ -4209,98 +4545,174 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
     precision highp float;
     precision highp sampler3D;
     ${MEDIUM_GLSL}
+    ${SURFACE_GRADIENT_BUMP_GLSL}
     in vec3 vWPos;
     in vec3 vWNorm;
     in vec3 vLPos;
-    flat in float vTPart;
+    in vec3 vLNorm;
+    in vec4 vTMatW;
     layout(location = 0) out vec4 fragColor;
 
-    // Compact 3D value noise for organic carapace & plastron grain
-    float tNoise3(vec3 p) {
-      vec3 i = floor(p);
-      vec3 f = fract(p);
-      f = f * f * (3.0 - 2.0 * f);
-      float n = dot(i, vec3(1.0, 57.0, 113.0));
-      return mix(
-        mix(mix(fract(sin(n) * 43758.5), fract(sin(n + 1.0) * 43758.5), f.x),
-            mix(fract(sin(n + 57.0) * 43758.5), fract(sin(n + 58.0) * 43758.5), f.x), f.y),
-        mix(mix(fract(sin(n + 113.0) * 43758.5), fract(sin(n + 114.0) * 43758.5), f.x),
-            mix(fract(sin(n + 170.0) * 43758.5), fract(sin(n + 171.0) * 43758.5), f.x), f.y),
-        f.z
-      );
-    }
-
-    // Compact 2D Voronoi cell distance for hexagonal turtle carapace scutes
-    vec2 scuteVoronoi(vec2 p) {
+    // Compact 2D Voronoi returning vec3(distToCenter, edgeDist, cellId)
+    vec3 turtleVoronoi(vec2 p) {
       vec2 n = floor(p);
       vec2 f = fract(p);
       float md1 = 8.0;
       float md2 = 8.0;
+      float id = 0.0;
       for (int j = -1; j <= 1; j++) {
         for (int i = -1; i <= 1; i++) {
           vec2 g = vec2(float(i), float(j));
-          vec2 o = 0.5 + 0.34 * sin(vec2(dot(n + g, vec2(127.1, 311.7)), dot(n + g, vec2(269.5, 183.3))) * 1.15);
+          vec2 h = vec2(dot(n + g, vec2(127.1, 311.7)), dot(n + g, vec2(269.5, 183.3)));
+          vec2 o = 0.5 + 0.34 * sin(h * 1.15);
           vec2 r = g + o - f;
           float d = dot(r, r);
-          if (d < md1) { md2 = md1; md1 = d; }
+          if (d < md1) { md2 = md1; md1 = d; id = fract(sin(dot(n + g, vec2(41.3, 289.1))) * 43758.5); }
           else if (d < md2) { md2 = d; }
         }
       }
-      return vec2(sqrt(md1), sqrt(md2) - sqrt(md1));
+      return vec3(sqrt(md1), sqrt(md2) - sqrt(md1), id);
     }
 
     void main() {
-      vec3 N = normalize(vWNorm);
-      if (!gl_FrontFacing) N = -N;
+      vec3 gn = normalize(vWNorm);
+      if (!gl_FrontFacing) gn = -gn;
 
-      vec3 alb;
-      float specPow = 42.0;
-      float specStr = 0.32;
+      float edgeThin = vTMatW.x;
+      float plastW = vTMatW.y;
+      float neckW = vTMatW.z;
+      float grp = vTMatW.w;
 
-      if (vTPart < 0.5) {
-        // Carapace: olive-amber & mahogany hexagonal scutes with sunburst growth rings
-        vec2 sc = scuteVoronoi(vLPos.xz * vec2(4.4, 3.8));
-        float seam = 1.0 - smoothstep(0.02, 0.10, sc.y);
-        float centerSun = smoothstep(0.45, 0.05, sc.x);
-        float radialGrain = 0.5 + 0.5 * sin(sc.x * 26.0 + tNoise3(vLPos * 9.0) * 2.5);
-        vec3 olive = vec3(0.22, 0.28, 0.14);
-        vec3 amber = vec3(0.48, 0.34, 0.14);
-        vec3 mahog = vec3(0.18, 0.12, 0.07);
-        alb = mix(olive, amber, centerSun * 0.72 + radialGrain * 0.18);
-        alb = mix(alb, mahog, seam * 0.78);
-        // Pale marginal rim around edge of carapace
-        float rim = smoothstep(0.48, 0.62, length(vLPos.xz * vec2(1.0, 0.72)));
-        alb = mix(alb, vec3(0.56, 0.49, 0.30), rim * 0.48);
-        specPow = 54.0;
-        specStr = 0.38;
-      } else if (vTPart < 1.5) {
-        // Plastron underside: warm creamy-ochre belly plates
-        alb = mix(vec3(0.58, 0.54, 0.38), vec3(0.46, 0.42, 0.28), tNoise3(vLPos * 6.0));
-        specStr = 0.16;
-      } else {
-        // Head & flippers: olive-slate skin with characteristic dark polygonal scale spots
-        vec2 sc = scuteVoronoi(vLPos.xz * 12.0 + vLPos.y * 8.0);
-        float spot = smoothstep(0.14, 0.24, sc.y);
-        vec3 skinPale = vec3(0.44, 0.45, 0.32);
-        vec3 skinScale = vec3(0.15, 0.19, 0.11);
-        alb = mix(skinPale, skinScale, spot * 0.85);
-        // Crisp dark eye spots on sides of head
-        if (vTPart < 2.5) {
-          float eyeD = length(vec3(abs(vLPos.x) - 0.115, vLPos.y - 0.085, vLPos.z - 1.08));
-          alb = mix(alb, vec3(0.02, 0.025, 0.03), 1.0 - smoothstep(0.022, 0.038, eyeD));
+      float isEye = step(4.5, grp) * step(grp, 5.5);
+      float isBarnacle = step(5.5, grp);
+      float isShell = step(grp, 0.5);
+      float isSkin = step(0.5, grp) * step(grp, 4.5);
+
+      TP tpMed = tri(vLPos * 8.0, gn);
+      TP tpFine = tri(vLPos * 24.0, gn);
+
+      vec3 alb = vec3(0.3);
+      float reliefH = 0.0;
+      float roughness = 0.28;
+      float specStr = 0.52;
+      float sssMask = 0.0;
+
+      if (isShell > 0.5) {
+        // ---- Carapace: Glossy Keratin Hexagonal Scutes with Sunburst Rays, Growth Rings & Emerald Algae Seams ----
+        vec3 sc = turtleVoronoi(vLPos.xz * vec2(4.1, 3.5));
+        float seamGroove = 1.0 - smoothstep(0.015, 0.095, sc.y);
+        float centerGlow = smoothstep(0.52, 0.04, sc.x);
+        // Radiating amber-chestnut sunburst keratin rays inside each individual scute plate!
+        float rayAng = atan(vLPos.x * 1.4, vLPos.z + 0.1) + sc.z * 6.283;
+        float sunburst = pow(0.5 + 0.5 * sin(rayAng * 14.0 + tpMed.h * 3.8), 1.4) * smoothstep(0.55, 0.08, sc.x);
+        float growthRing = 0.5 + 0.5 * sin(sc.x * 38.0 + tpFine.h * 2.0);
+
+        vec3 oliveBase = vec3(0.17, 0.24, 0.11);
+        vec3 chestnut = vec3(0.38, 0.21, 0.08);
+        vec3 goldenAmber = vec3(0.62, 0.44, 0.15);
+        vec3 darkSeam = vec3(0.06, 0.05, 0.03);
+
+        vec3 carCol = mix(oliveBase, chestnut, sc.z * 0.55 + centerGlow * 0.45);
+        carCol = mix(carCol, goldenAmber, sunburst * 0.68 + growthRing * 0.14);
+        // Pale warm golden-ochre marginal skirt scutes around outer rim of carapace
+        float rimBand = smoothstep(0.52, 0.88, edgeThin);
+        carCol = mix(carCol, vec3(0.58, 0.48, 0.26) * (0.82 + 0.30 * tpMed.h), rimBand * 0.52);
+        // Deep shadowed keratin scute suture grooves + subtle emerald algae biofilm in rear crevices
+        carCol = mix(carCol, darkSeam, seamGroove * 0.82);
+        float rearAlgae = smoothstep(-0.1, -0.75, vLPos.z) * smoothstep(0.42, 0.76, tpMed.c) * (0.35 + 0.65 * seamGroove);
+        carCol = mix(carCol, vec3(0.07, 0.22, 0.11), rearAlgae * 0.58);
+
+        // ---- Plastron Underside: Warm Golden-Cream Belly Plates with Symmetrical Sutures ----
+        float plMidSeam = exp(-pow(vLPos.x / 0.025, 2.0));
+        float plCross = exp(-pow(sin(vLPos.z * 7.5) / 0.12, 2.0));
+        float plSeam = clamp(max(plMidSeam, plCross * 0.7), 0.0, 1.0);
+        vec3 plCol = mix(vec3(0.64, 0.58, 0.39), vec3(0.46, 0.40, 0.25), tpMed.h * 0.45 + plSeam * 0.55);
+
+        alb = mix(carCol, plCol, plastW);
+        reliefH = mix(
+          (1.0 - seamGroove * 1.45) * 0.65 + growthRing * 0.16 + (tpFine.h - 0.5) * 0.18,
+          -plSeam * 0.8 + (tpFine.h - 0.5) * 0.22,
+          plastW
+        );
+        roughness = mix(0.20, 0.36, max(plastW, rearAlgae * 0.8));
+        specStr = mix(0.68, 0.26, max(plastW, rearAlgae * 0.8));
+      } else if (isSkin > 0.5) {
+        // ---- Head, Wrinkled Neck & Flippers: 3D Polygonal Reptilian Keratin Scales! ----
+        float scaleFreq = grp < 1.5 ? 16.5 : 13.5;
+        vec3 sc = turtleVoronoi(vLPos.xz * scaleFreq + vec2(vLPos.y * 11.0, -vLPos.y * 9.0));
+        float scaleCenter = smoothstep(0.06, 0.22, sc.y);
+        float scalePillow = smoothstep(0.0, 0.26, sc.y);
+        // Thick wrinkled leathery neck folds
+        float neckWrinkle = sin(vLPos.z * 68.0 + tpMed.h * 4.5) * neckW;
+
+        vec3 creaseOchre = vec3(0.54, 0.50, 0.33);
+        vec3 darkScale = mix(vec3(0.11, 0.14, 0.08), vec3(0.24, 0.20, 0.10), sc.z);
+        vec3 dorsalSkin = mix(creaseOchre, darkScale, scaleCenter * 0.90);
+        // Paler creamy-ochre ventral underside of neck & flippers
+        vec3 ventralSkin = mix(vec3(0.58, 0.54, 0.38), vec3(0.32, 0.31, 0.20), scaleCenter * 0.38);
+        alb = mix(dorsalSkin, ventralSkin, plastW * 0.85);
+
+        // Dark recessed nostril nares & hooked horny beak edge on snout tip
+        if (grp < 1.5) {
+          float nostrilD = length(vec3(abs(vLPos.x) - 0.024, vLPos.y - 0.048, vLPos.z - 1.28));
+          alb = mix(alb, vec3(0.03, 0.035, 0.03), 1.0 - smoothstep(0.008, 0.016, nostrilD));
+          float beakEdge = smoothstep(1.16, 1.32, vLPos.z) * smoothstep(0.04, -0.02, vLPos.y);
+          alb = mix(alb, vec3(0.36, 0.31, 0.20), beakEdge * 0.65);
+          // Subtle dark eyelid fold shadow around eyes
+          float eyeAO = 1.0 - 0.42 * exp(-pow((abs(vLPos.x) - 0.128) / 0.055, 2.0) - pow((vLPos.y - 0.088) / 0.048, 2.0) - pow((vLPos.z - 1.115) / 0.060, 2.0));
+          alb *= eyeAO;
         }
-        specStr = 0.24;
+
+        reliefH = scalePillow * 0.95 + neckWrinkle * 0.55 + (tpFine.h - 0.5) * 0.22;
+        roughness = mix(0.28, 0.38, plastW);
+        specStr = 0.42;
+        sssMask = edgeThin * 0.85;
+      } else if (isBarnacle > 0.5) {
+        // ---- Epibiont Turtle Barnacles (Chelonibia): Pale Calcified Star-Ribbed Volcanoes ----
+        alb = mix(vec3(0.26, 0.28, 0.22), vec3(0.74, 0.72, 0.65), smoothstep(0.08, 0.65, edgeThin)) * (0.85 + 0.28 * tpFine.h);
+        reliefH = tpFine.h * 0.85 + tpMed.h * 0.5;
+        roughness = 0.62;
+        specStr = 0.18;
+      } else if (isEye > 0.5) {
+        // ---- Lifelike Glossy Amber-Obsidian Sea Turtle Eye ----
+        vec2 eRel = vec2((vLPos.z - 1.115) / 0.036, (vLPos.y - 0.088) / 0.034);
+        float eR = length(eRel);
+        float pupil = 1.0 - smoothstep(0.42, 0.58, eR);
+        float iris = (1.0 - pupil) * (1.0 - smoothstep(0.75, 0.96, eR));
+        alb = mix(vec3(0.02, 0.025, 0.02), vec3(0.32, 0.22, 0.09), iris);
+        alb = mix(alb, vec3(0.004, 0.005, 0.007), pupil);
+        roughness = 0.04;
+        specStr = 1.75;
       }
 
+      // True 4K-equivalent Mikkelsen surface-gradient micro-relief normal perturbation
+      vec3 N = (isEye > 0.5) ? gn : perturbNormalBump(vWPos, gn, reliefH, isShell > 0.5 ? 0.016 : 0.014);
+
       float sh = shadow9(vWPos);
-      float ca = caus(vWPos);
+      vec3 caRaw = causRGB(vWPos);
+      vec3 ca = caRaw / (1.0 + caRaw * 0.45);
       vec3 sunIrr = sunE(vWPos);
-      float ndl = max(dot(N, uSunDir), 0.0);
       vec3 V = normalize(uCamPos - vWPos);
       vec3 H = normalize(V + uSunDir);
-      float spec = pow(max(dot(N, H), 0.0), specPow) * specStr * sh;
+      float ndl = max(dot(N, uSunDir), 0.0);
+      float ndh = max(dot(N, H), 0.0);
+      float wrapNdl = max(0.0, (dot(N, uSunDir) + 0.15) / 1.15);
 
-      vec3 lit = alb * (sunIrr * ndl * sh * (0.68 + 1.35 * ca) + amb(vWPos, N) * 1.15 + sideLight(vWPos, N)) + sunIrr * spec;
+      // Dual-lobe wet keratin/scale GGX specular + mirror clearcoat glint
+      float alphaSq = pow(roughness, 4.0);
+      float denom = ndh * ndh * (alphaSq - 1.0) + 1.0;
+      float D_ggx = alphaSq / max(3.14159 * denom * denom, 1e-4);
+      float fres = 0.03 + 0.97 * pow(1.0 - max(dot(H, V), 0.0), 5.0);
+      float wetSpec = (D_ggx * fres * specStr + pow(ndh, 90.0) * 0.26 * (1.0 - isBarnacle)) * sh;
+
+      // Sandy reef bounce light illuminating the golden plastron & flipper undersides + thin flipper SSS
+      vec3 bellyBounce = vec3(0.22, 0.26, 0.22) * max(-N.y, 0.0) * (0.6 + 0.6 * plastW);
+      float backLight = pow(clamp(dot(-V, uSunDir + N * 0.4), 0.0, 1.0), 2.5);
+      vec3 sss = vec3(0.36, 0.48, 0.26) * sunIrr * backLight * sssMask * (0.45 + 0.55 * sh) * 0.55;
+
+      vec3 lit = alb * (sunIrr * wrapNdl * sh * (0.58 + 1.32 * ca) + amb(vWPos, N) * 1.12 + sideLight(vWPos, N) + bellyBounce)
+        + sunIrr * (0.35 + ca * 0.95) * wetSpec
+        + sss;
       fragColor = vec4(fog(lit, vWPos), 1.0);
     }
   `;
@@ -4316,7 +4728,7 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
     vertexShader: turtleVs,
     fragmentShader: turtleFs,
     glslVersion: THREE.GLSL3,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
   }), sharedUniforms);
   const turtleShadowMat = bindSharedUniforms(new THREE.ShaderMaterial({
     uniforms: sharedUniforms,

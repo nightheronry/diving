@@ -480,6 +480,7 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
       float hgt = A.h * 0.5 + B.h * 0.35 + C.h * 0.15;
 
       float sgro = 0.0;
+      float shipBumpH = 0.0;
       float bump = 1.65;
       float gloss = 0.10;
       float metallic = 0.0;
@@ -566,23 +567,61 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
         bump = 0.30;
         vao = 0.65 + 0.35 * vAo;
       } else if (kind < 6.5) {
-        // 6: Sunken Wooden Shipwreck (PBR split oak strakes, iron nail rust stains, emerald moss & barnacle collars)
-        alb = mix(vec3(0.11, 0.072, 0.042), vec3(0.35, 0.23, 0.13), Wd.b) * (0.56 + 0.54 * B.h);
-        float pk = fract(atan(vOp.z, 2.0 - vOp.y) * 7.0);
-        float plankGroove = 1.0 - ss(0.0, 0.12, min(pk, 1.0 - pk));
-        alb *= (1.0 - 0.62 * plankGroove);
-        // Iron bolt rust bleeding vertically from plank joints
-        float boltDot = ss(0.25, 0.04, abs(fract(vLocalPos.z * 1.8) - 0.5)) * ss(0.22, 0.05, min(pk, 1.0 - pk));
-        alb = mix(alb, vec3(0.26, 0.11, 0.05), boltDot * 0.75);
-        // Velvety marine moss & pale calcified barnacle colonies
-        float moss = ss(0.46, 0.68, A.c * 0.65 + big * 0.45) * (0.45 + 0.55 * ss(-0.1, 0.6, gn.y));
-        alb = mix(alb, vec3(0.06, 0.21, 0.14) * (0.65 + 0.55 * C.h), moss * 0.68);
-        float barn = ss(0.66, 0.80, F.h * 0.6 + C.c * 0.55) * ss(0.48, 0.72, B.c);
-        alb = mix(alb, vec3(0.56, 0.55, 0.49), barn * 0.65);
-        sgro = -plankGroove * 0.85;
-        gloss = mix(0.14, 0.42, ss(0.48, 0.78, B.h) * (1.0 - moss * 0.65));
-        bump = 0.88;
-        vao = 0.60 + 0.40 * vAo;
+        // 6: GTA-6-Grade Sunken 18th-Century Wooden Galleon Shipwreck
+        // Axis-aligned waterlogged oak strakes, staggered butt joints, wrought-iron rust drips,
+        // dark corroded cannons/anchor, velvety emerald algae turf & calcified barnacle collars
+        float isDeckFace = ss(0.45, 0.82, abs(on.y));
+        float plankCoord = mix(vLocalPos.y * 4.2 + sin(vLocalPos.z * 0.45) * 0.18, vLocalPos.x * 3.8, isDeckFace);
+        float plankId = floor(plankCoord);
+        float pk = fract(plankCoord);
+        float plankSeed = hs(plankId * 13.7 + floor(vLocalPos.z * 0.12) * 3.1);
+
+        // Staggered oak plank butt-joints along hull length (z)
+        float buttCoord = fract(vLocalPos.z * 0.42 + plankSeed * 4.0);
+        float buttSeam = 1.0 - ss(0.0, 0.032, min(buttCoord, 1.0 - buttCoord));
+        float strakeSeam = 1.0 - ss(0.0, 0.095, min(pk, 1.0 - pk));
+        float plankGroove = clamp(max(strakeSeam, buttSeam * 0.85), 0.0, 1.0);
+
+        // Fibrous longitudinal waterlogged oak wood grain & splinter cracks
+        float grainFine = sin(plankCoord * 38.0 + B.h * 9.0 + vLocalPos.z * 1.4) * 0.5 + 0.5;
+        float grainDeep = ss(0.22, 0.78, Wd.b * 0.65 + grainFine * 0.35);
+        vec3 darkOak = vec3(0.075, 0.052, 0.034);
+        vec3 warmOak = vec3(0.28, 0.19, 0.11);
+        vec3 bleachedOak = vec3(0.32, 0.27, 0.21);
+        vec3 woodCol = mix(darkOak, warmOak, grainDeep) * mix(0.76, 1.18, plankSeed);
+        // Saltwater sun-bleached drift patina on exposed upper timbers
+        woodCol = mix(woodCol, bleachedOak, ss(0.45, 0.85, gn.y) * ss(0.45, 0.78, A.c) * 0.38);
+        woodCol *= (0.58 + 0.52 * B.h);
+        // Dark tar-caulked grooves between oak strakes
+        woodCol *= (1.0 - 0.74 * plankGroove);
+
+        // Recessed iron treenails & wrought-iron bolts at rib stations + vertical gravity rust streaks
+        float ribPulse = ss(0.18, 0.03, abs(fract(vLocalPos.z * 1.25) - 0.5));
+        float boltDot = ribPulse * ss(0.24, 0.04, abs(pk - 0.5));
+        float rustStreak = ribPulse * ss(0.15, 0.85, 1.0 - pk) * ss(0.35, 0.72, B.c);
+        woodCol = mix(woodCol, vec3(0.06, 0.04, 0.035), boltDot * 0.85);
+        woodCol = mix(woodCol, vec3(0.26, 0.095, 0.042), clamp(boltDot * 0.65 + rustStreak * 0.58, 0.0, 0.85));
+
+        // Corroded cast-iron hardware detection (naval cannons & bow iron anchor tagged with dark vAo ~ 0.30..0.38)
+        float isHardware = (1.0 - ss(0.37, 0.42, vAo)) * ss(0.28, 0.32, vAo);
+        vec3 ironCol = mix(vec3(0.08, 0.09, 0.10), vec3(0.26, 0.11, 0.05), ss(0.42, 0.72, A.c * 0.6 + B.h * 0.5));
+        alb = mix(woodCol, ironCol, isHardware * 0.85);
+        metallic = isHardware * 0.55;
+
+        // Thick velvety emerald-olive marine algae turf carpeting upward-facing decks, rails & mast
+        float moss = ss(0.44, 0.70, A.c * 0.60 + big * 0.48) * (0.28 + 0.72 * ss(-0.05, 0.65, gn.y));
+        alb = mix(alb, vec3(0.045, 0.18, 0.11) * (0.62 + 0.58 * C.h), moss * 0.72);
+
+        // Pale calcified barnacle & oyster crust colonies near waterline timbers, ribs & anchor
+        float barn = ss(0.64, 0.80, F.h * 0.58 + C.c * 0.56) * ss(0.42, 0.72, B.c);
+        alb = mix(alb, vec3(0.56, 0.55, 0.49) * (0.72 + 0.42 * F.h), barn * 0.72);
+
+        // Physical micro-relief heightfield for 4K surface-gradient normal perturbation
+        shipBumpH = -plankGroove * 1.35 + (grainDeep - 0.5) * 0.48 + barn * 0.85 - boltDot * 0.55 + (F.h - 0.5) * 0.28;
+        sgro = -plankGroove * 0.65;
+        gloss = mix(0.14, 0.48, ss(0.45, 0.78, B.h) * (1.0 - moss * 0.72) * (1.0 - barn * 0.65));
+        bump = 0.72;
+        vao = 0.42 + 0.58 * vAo;
       } else if (kind < 7.5) {
         // 7: Twisted Giant Kelp Stipe Columns
         alb = mix(vec3(0.11, 0.15, 0.06), vec3(0.22, 0.23, 0.08), B.h) * (0.75 + 0.35 * C.h);
@@ -682,6 +721,20 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
         vQuat,
         normalize(on + (A.n * 0.85 + B.n * 0.65 + C.n * 0.45 * ss(60.0, 12.0, dist) + F.n * 0.58 * fk) * bump + vec3(0.8, sgro, 0.35))
       ));
+      // Mikkelsen surface-gradient micro-relief bump for Sunken Shipwreck oak strakes & barnacles
+      if (kind > 5.5 && kind < 6.5) {
+        vec3 dPX = dFdx(vWPos);
+        vec3 dPY = dFdy(vWPos);
+        vec3 r1 = cross(dPY, rockN);
+        vec3 r2 = cross(rockN, dPX);
+        float detS = dot(dPX, r1);
+        if (abs(detS) > 1e-6) {
+          vec3 gS = sign(detS) * (dFdx(shipBumpH) * r1 + dFdy(shipBumpH) * r2) / max(abs(detS), 1e-5);
+          float gL = length(gS);
+          if (gL > 3.8) gS *= 3.8 / gL;
+          rockN = normalize(rockN - 0.036 * gS);
+        }
+      }
 
       vec3 L = uSunDir;
       vec3 V = normalize(uCamPos - vWPos);
