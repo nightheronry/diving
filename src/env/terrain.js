@@ -648,36 +648,77 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
         flu = 0.92;
         vao = 0.45 + 0.55 * vAo;
       } else if (kind < 9.5) {
-        // 9: Sunken WWII Fighter Plane Wreck (PBR peeling paint, bare metallic aluminum, rust streaks & barnacles)
-        vec3 paintCol = mix(vec3(0.13, 0.19, 0.20), vec3(0.33, 0.38, 0.37), sat(A.c * 1.4 - 0.15));
-        float gxSeam = abs(fract(vLocalPos.x * 1.15) - 0.5);
-        float gzSeam = abs(fract(vLocalPos.z * 1.35) - 0.5);
-        float panelSeam = 1.0 - ss(0.0, 0.036, min(gxSeam, gzSeam));
-        float rvX = abs(fract(vLocalPos.x * 18.0) - 0.5);
-        float rvZ = abs(fract(vLocalPos.z * 18.0) - 0.5);
-        float rivet = (1.0 - ss(0.05, 0.14, length(vec2(rvX, rvZ)))) * ss(0.09, 0.01, min(gxSeam, gzSeam));
+        // 9: GTA-6-Grade Sunken WWII Monoplane Fighter Wreck (Mitsubishi A6M Zero / Radial Fighter)
+        // Stamped duralumin panel seams, double-row flush rivets, zinc-chromate primer halos, peeling sage-grey
+        // paint over brushed metallic aluminum, ghosted crimson wing/fuselage roundels, black anti-glare cowl,
+        // exhaust rust/soot streaks & calcified coral-reef barnacle encrustation
+        float gxSeam = abs(fract(vLocalPos.x * 1.18 + 0.15) - 0.5);
+        float gzSeam = abs(fract(vLocalPos.z * 1.28) - 0.5);
+        float minSeam = min(gxSeam, gzSeam);
+        float panelSeam = 1.0 - ss(0.0, 0.028, minSeam);
 
-        // Peeling paint exposing brushed saltwater-oxidized metallic duralumin skin
-        float bareMetal = ss(0.56, 0.74, A.c * 0.55 + B.h * 0.55) * ss(0.55, 0.92, vAo);
-        vec3 baseMetal = mix(paintCol * (0.76 + 0.36 * B.h), vec3(0.58, 0.65, 0.64) * (0.82 + 0.30 * C.h), bareMetal * 0.75);
-        alb = baseMetal * (1.0 - panelSeam * 0.52) + vec3(0.10, 0.12, 0.12) * rivet;
+        // Double-row flush aircraft rivets bordering every aluminum panel seam
+        float rvX = abs(fract(vLocalPos.x * 22.0) - 0.5);
+        float rvZ = abs(fract(vLocalPos.z * 22.0) - 0.5);
+        float rivetBand = ss(0.11, 0.04, minSeam) * ss(0.022, 0.048, minSeam);
+        float rivet = (1.0 - ss(0.08, 0.22, length(vec2(rvX, rvZ)))) * rivetBand;
 
-        // Gravity-aligned iron rust streaks dripping from engine cowling & panel seams
-        float rustStreak = ss(0.52, 0.78, sin(vLocalPos.x * 11.0 + A.c * 6.0) * 0.5 + 0.5) * ss(0.18, 0.01, min(gxSeam, gzSeam));
-        float engineRust = max(ss(3.10, 4.45, vLocalPos.z), rustStreak * 0.70);
-        alb = mix(alb, vec3(0.24, 0.13, 0.08) * (0.68 + 0.55 * B.h), engineRust * 0.68);
+        // Subtle sheet-metal oil-canning dent waves across fuselage & wing panels
+        float oilCan = sin(vLocalPos.x * 3.8 + vLocalPos.z * 2.4 + A.h * 2.8) * 0.5 + 0.5;
 
-        // Calcareous marine algae & white barnacle crust along upward wings & fuselage
-        float encrust = ss(-0.05, 0.68, gn.y) * ss(0.42, 0.66, big * 0.55 + B.c * 0.55);
-        alb = mix(alb, vec3(0.14, 0.26, 0.20) * (0.65 + 0.6 * C.h), encrust * 0.62);
-        float barn = ss(0.65, 0.80, F.h * 0.62 + C.c * 0.52) * ss(0.46, 0.74, B.c) * ss(-0.1, 0.5, gn.y);
-        alb = mix(alb, vec3(0.58, 0.58, 0.53), barn * 0.70);
+        // Classic WWII Imperial grey-sage paint + dark matte-black NACA engine cowling (z > 3.15)
+        float isCowl = ss(3.10, 3.24, vLocalPos.z) * (1.0 - ss(4.56, 4.72, vLocalPos.z));
+        float isProp = ss(4.55, 4.70, vLocalPos.z);
+        vec3 sagePaint = mix(vec3(0.17, 0.22, 0.21), vec3(0.32, 0.36, 0.34), sat(A.c * 1.35 - 0.12));
+        vec3 cowlBlack = mix(vec3(0.035, 0.042, 0.048), vec3(0.08, 0.09, 0.10), B.h);
+        vec3 paintCol = mix(sagePaint, cowlBlack, isCowl * 0.88);
+        paintCol = mix(paintCol, vec3(0.14, 0.12, 0.11), isProp * 0.72); // weathered dark metal propeller blades
 
-        sgro = -panelSeam * 0.78;
-        metallic = bareMetal * (1.0 - encrust * 0.8) * (1.0 - engineRust * 0.7) * 0.75;
-        gloss = mix(0.24, 0.72, bareMetal * (1.0 - encrust * 0.75)) * (1.0 - barn * 0.6);
-        bump = mix(0.48, 0.95, barn + encrust * 0.5);
-        vao = 0.52 + 0.48 * vAo;
+        // Ghosted sun-bleached crimson wing roundels (x ~ ±3.65, z ~ 0.35) & fuselage flank roundel (z ~ -2.35)
+        float wingRoundelR = length(vec2(abs(vLocalPos.x) - 3.65, vLocalPos.z - 0.35));
+        float wingRoundel = (1.0 - ss(0.62, 0.72, wingRoundelR)) * ss(0.35, 0.75, abs(on.y));
+        float fuseRoundelR = length(vec2(vLocalPos.z + 2.35, vLocalPos.y - 0.08));
+        float fuseRoundel = (1.0 - ss(0.34, 0.42, fuseRoundelR)) * ss(0.45, 0.82, abs(on.x)) * (1.0 - ss(0.82, 1.05, abs(vLocalPos.x)));
+        float roundelMask = clamp(wingRoundel + fuseRoundel, 0.0, 1.0);
+        paintCol = mix(paintCol, vec3(0.34, 0.085, 0.075), roundelMask * 0.68);
+
+        // Faded yellow WWII leading-edge ID stripe on inboard wing leading edge & propeller tip warning bands
+        float wingLE = ss(1.15, 3.85, abs(vLocalPos.x)) * ss(1.05, 1.48, vLocalPos.z) * (1.0 - ss(1.68, 1.85, vLocalPos.z));
+        float propTipBand = isProp * ss(1.18, 1.32, length(vLocalPos.xy)) * (1.0 - ss(1.42, 1.52, length(vLocalPos.xy)));
+        paintCol = mix(paintCol, vec3(0.54, 0.42, 0.12), clamp(wingLE * 0.42 + propTipBand * 0.75, 0.0, 0.75));
+
+        // Jagged peeling paint revealing zinc-chromate yellow-green primer halo + brushed metallic duralumin alloy!
+        float peelField = A.c * 0.54 + B.h * 0.46 + (C.h - 0.5) * 0.16;
+        float bareMetal = ss(0.56, 0.66, peelField) * ss(0.48, 0.88, vAo);
+        float primerHalo = ss(0.50, 0.57, peelField) * (1.0 - bareMetal) * ss(0.45, 0.85, vAo);
+        vec3 primerCol = vec3(0.28, 0.34, 0.15);
+        vec3 duralumin = vec3(0.58, 0.64, 0.64) * (0.78 + 0.34 * C.h);
+
+        vec3 baseSkin = paintCol * (0.76 + 0.34 * B.h);
+        baseSkin = mix(baseSkin, primerCol, primerHalo * 0.72);
+        baseSkin = mix(baseSkin, duralumin, bareMetal * 0.82);
+        // Darkened recessed panel seams & bright rivet pinheads
+        alb = baseSkin * (1.0 - panelSeam * 0.58) + vec3(0.11, 0.13, 0.13) * rivet * (1.0 - panelSeam);
+
+        // Dark radial engine soot & iron-oxide rust streaks streaming aft from exhaust stubs & panel seams
+        float exhaustBand = ss(1.45, 3.22, vLocalPos.z) * (1.0 - ss(3.25, 3.65, vLocalPos.z)) * ss(-0.55, 0.12, vLocalPos.y) * (1.0 - ss(0.85, 1.15, abs(vLocalPos.x)));
+        float rustStreak = ss(0.46, 0.76, sin(vLocalPos.x * 13.0 + A.c * 6.5) * 0.5 + 0.5) * ss(0.16, 0.01, minSeam);
+        float engineRust = clamp(max(exhaustBand * 0.72, rustStreak * 0.62) + isCowl * ss(0.52, 0.78, B.c) * 0.45, 0.0, 0.85);
+        alb = mix(alb, vec3(0.22, 0.11, 0.065) * (0.65 + 0.55 * B.h), engineRust * 0.66);
+
+        // Rich marine olive-emerald algae film & calcified white coral-reef barnacle colonies along upward surfaces
+        float encrust = ss(-0.08, 0.68, gn.y) * ss(0.40, 0.66, big * 0.55 + B.c * 0.55);
+        alb = mix(alb, vec3(0.11, 0.24, 0.17) * (0.62 + 0.60 * C.h), encrust * 0.65);
+        float barn = ss(0.62, 0.78, F.h * 0.60 + C.c * 0.54) * ss(0.42, 0.72, B.c) * ss(-0.1, 0.5, gn.y);
+        alb = mix(alb, vec3(0.58, 0.58, 0.52) * (0.76 + 0.36 * F.h), barn * 0.74);
+
+        // 4K-equivalent surface-gradient heightfield for panel seams, rivets, paint peel edges & barnacles
+        shipBumpH = -panelSeam * 1.45 + rivet * 0.65 - bareMetal * 0.28 + oilCan * 0.25 + barn * 0.95 + (F.h - 0.5) * 0.24;
+        sgro = -panelSeam * 0.62;
+        metallic = clamp((bareMetal * 0.85 + isProp * 0.45) * (1.0 - encrust * 0.82) * (1.0 - engineRust * 0.65) * (1.0 - barn * 0.85), 0.0, 0.85);
+        gloss = mix(0.24, 0.78, bareMetal * (1.0 - encrust * 0.75)) * (1.0 - barn * 0.68);
+        bump = mix(0.42, 0.85, barn + encrust * 0.45);
+        vao = 0.44 + 0.56 * vAo;
       } else if (kind < 10.5) {
         // 10: Giant Gorgonian Sea Fan
         float morph = fract(vMeta.y * 5.3);
@@ -721,8 +762,8 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
         vQuat,
         normalize(on + (A.n * 0.85 + B.n * 0.65 + C.n * 0.45 * ss(60.0, 12.0, dist) + F.n * 0.58 * fk) * bump + vec3(0.8, sgro, 0.35))
       ));
-      // Mikkelsen surface-gradient micro-relief bump for Sunken Shipwreck oak strakes & barnacles
-      if (kind > 5.5 && kind < 6.5) {
+      // Mikkelsen surface-gradient micro-relief bump for Sunken Shipwreck (kind 6) & WWII Fighter Wreck (kind 9)
+      if ((kind > 5.5 && kind < 6.5) || (kind > 8.5 && kind < 9.5)) {
         vec3 dPX = dFdx(vWPos);
         vec3 dPY = dFdy(vWPos);
         vec3 r1 = cross(dPY, rockN);
@@ -732,7 +773,7 @@ export function createSolidMaterial(sharedUniforms, { instanced = false, isSkirt
           vec3 gS = sign(detS) * (dFdx(shipBumpH) * r1 + dFdy(shipBumpH) * r2) / max(abs(detS), 1e-5);
           float gL = length(gS);
           if (gL > 3.8) gS *= 3.8 / gL;
-          rockN = normalize(rockN - 0.036 * gS);
+          rockN = normalize(rockN - (kind > 8.5 ? 0.026 : 0.036) * gS);
         }
       }
 

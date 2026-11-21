@@ -3981,7 +3981,7 @@ export function compileMarineLife(terrain, sharedUniforms, anemoneAnchors = []) 
     [-56, -34, -4, 10, 420, 0.36, -1, 0.3, 1],   // Sponge Canyon: Sunset Coral Anthias
     [8, -35, 84, 15, 320, 0.36, 1, 0.62, 3],     // Purple Grotto Outer Lagoon: Regal Blue Tangs
     [-90, -28, -70, 25, 300, 0.36, 1, 0.25, 4],  // Outer Reef: Mirror-Chrome Baitball Jacks
-    [95, -30, 70, 25, 300, 0.36, -1, 0.78, 0],   // Blue-Green Fusiliers
+    [71.0, -21.5, -25.0, 9.5, 300, 0.35, -1, 0.22, 0], // WWII Fighter Wreck Reef: Blue-Green Chromis & Fusiliers (Vista 8!)
     [0, -18.5, 6, 18, 380, 0.40, -1, 0.68, 4],   // Upper Canyon Sunlit Baitball: Mirror-Chrome Jacks (Vista 1!)
     [-30, -30, -100, 18, 300, 0.36, 1, 0.18, 1], // Sunset Anthias
     [16, -35, 30, 12, 300, 0.36, 1, 0.85, 3],    // Regal Blue Tangs

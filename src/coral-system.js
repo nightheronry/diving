@@ -1011,218 +1011,435 @@ function meshAnemone() {
   return m.build();
 }
 
-// 13. Sunken WWII Monoplane Fighter Wreck (Radial Engine Cowl, Open Cockpit, Bent Propeller, Torn Wing Cutouts & Spars)
+// 13. GTA-6-Grade Sunken WWII Monoplane Fighter Wreck (Mitsubishi A6M Zero / Radial Fighter)
+// High-Res Sculpted Fuselage (28x24) + Exposed 9-Cylinder Finned Radial Engine & Cowl Flaps +
+// Oil Cooler Scoop & Nose Gun Troughs + Deep Cockpit Tub (Pilot Seat, Stick, Instrument Coaming,
+// Gunsight, Crash Pylon & Shattered Greenhouse Canopy Frames) + Twisted Airfoil 3-Blade Propeller +
+// 26-Span NACA Airfoil Wings with Torn Corrosion Bays Exposing Internal Spars/Ribs + 20mm Wing Cannons +
+// Dropped Flaps & Ailerons + Sculpted Airfoil Vertical Fin/Deflected Rudder & Horizontal Stabilizers
 function meshFighterWreck() {
   const m = new ProcMesh();
 
-  // A. Radial-engine fuselage from tailpost (z = -5.1) to engine cowling (z = +4.5)
+  function addBox(cx, cy, cz, hx, hy, hz, rotY = 0, rotX = 0, rotZ = 0, aoBot = 0.45, aoTop = 0.88) {
+    const cY = Math.cos(rotY), sY = Math.sin(rotY);
+    const cX = Math.cos(rotX), sX = Math.sin(rotX);
+    const cZ = Math.cos(rotZ), sZ = Math.sin(rotZ);
+    const corners = [
+      [-hx, -hy, -hz], [hx, -hy, -hz], [hx, hy, -hz], [-hx, hy, -hz],
+      [-hx, -hy, hz], [hx, -hy, hz], [hx, hy, hz], [-hx, hy, hz],
+    ];
+    const verts = corners.map(([lx, ly, lz]) => {
+      const x1 = lx * cZ - ly * sZ;
+      const y1 = lx * sZ + ly * cZ;
+      const y2 = y1 * cX - lz * sX;
+      const z2 = y1 * sX + lz * cX;
+      const x3 = x1 * cY + z2 * sY;
+      const z3 = -x1 * sY + z2 * cY;
+      return m.v(cx + x3, cy + y2, cz + z3, ly > 0 ? aoTop : aoBot);
+    });
+    m.quad(verts[0], verts[3], verts[2], verts[1]);
+    m.quad(verts[4], verts[5], verts[6], verts[7]);
+    m.quad(verts[0], verts[1], verts[5], verts[4]);
+    m.quad(verts[3], verts[7], verts[6], verts[2]);
+    m.quad(verts[0], verts[4], verts[7], verts[3]);
+    m.quad(verts[1], verts[2], verts[6], verts[5]);
+  }
+
+  // ---- A. High-Resolution Tapered Radial-Engine Fuselage (Tailpost z=-5.25 -> Engine Cowl Lip z=+4.58) ----
   const fStations = [
-    { z: -5.1, rx: 0.14, ry: 0.28, y0: 0.14, cockpit: false },
-    { z: -3.8, rx: 0.34, ry: 0.44, y0: 0.10, cockpit: false },
-    { z: -2.1, rx: 0.54, ry: 0.62, y0: 0.04, cockpit: false },
-    { z: -0.5, rx: 0.68, ry: 0.72, y0: 0.00, cockpit: true },
-    { z: 0.45, rx: 0.72, ry: 0.74, y0: 0.00, cockpit: true },
-    { z: 1.45, rx: 0.73, ry: 0.74, y0: 0.00, cockpit: false },
-    { z: 3.10, rx: 0.74, ry: 0.74, y0: 0.00, cockpit: false },
-    { z: 4.15, rx: 0.70, ry: 0.70, y0: 0.00, cockpit: false },
-    { z: 4.55, rx: 0.58, ry: 0.58, y0: 0.00, cockpit: false },
-    { z: 4.35, rx: 0.42, ry: 0.42, y0: 0.00, cockpit: false },
-    { z: 3.70, rx: 0.38, ry: 0.38, y0: 0.00, cockpit: false },
+    { z: -5.25, rx: 0.11, ry: 0.25, y0: 0.15, cockpit: 0 },
+    { z: -4.45, rx: 0.24, ry: 0.36, y0: 0.12, cockpit: 0 },
+    { z: -3.55, rx: 0.38, ry: 0.48, y0: 0.08, cockpit: 0 },
+    { z: -2.55, rx: 0.50, ry: 0.58, y0: 0.04, cockpit: 0 },
+    { z: -1.55, rx: 0.60, ry: 0.66, y0: 0.02, cockpit: 0 },
+    { z: -0.75, rx: 0.66, ry: 0.72, y0: 0.00, cockpit: 0 },
+    { z: -0.45, rx: 0.68, ry: 0.73, y0: 0.00, cockpit: 1 }, // Aft cockpit bulkhead
+    { z: 0.15, rx: 0.71, ry: 0.74, y0: 0.00, cockpit: 1 },  // Pilot seat bay
+    { z: 0.85, rx: 0.72, ry: 0.75, y0: 0.00, cockpit: 1 },  // Control stick & instrument well
+    { z: 1.28, rx: 0.73, ry: 0.75, y0: 0.00, cockpit: 0 },  // Forward windshield cowl deck
+    { z: 2.15, rx: 0.74, ry: 0.75, y0: 0.00, cockpit: 0 },  // Nose MG deck
+    { z: 3.12, rx: 0.75, ry: 0.75, y0: 0.00, cockpit: 0 },  // Cowl flap ring
+    { z: 3.22, rx: 0.78, ry: 0.78, y0: 0.00, cockpit: 0 },  // Flared engine cowling rear lip
+    { z: 3.95, rx: 0.74, ry: 0.74, y0: 0.00, cockpit: 0 },  // Engine cowl barrel
+    { z: 4.46, rx: 0.65, ry: 0.65, y0: 0.00, cockpit: 0 },  // Rounded NACA cowl nose curve
+    { z: 4.58, rx: 0.56, ry: 0.56, y0: 0.00, cockpit: 0 },  // Cowl intake lip
+    { z: 4.44, rx: 0.50, ry: 0.50, y0: 0.00, cockpit: 0 },  // Inner cowl intake wall
+    { z: 3.62, rx: 0.48, ry: 0.48, y0: 0.00, cockpit: 0 },  // Firewall deep inside radial engine bay
   ];
-  const fArcs = 16;
+  const fArcs = 24;
   const fRings = [];
   for (let i = 0; i < fStations.length; i++) {
     const st = fStations[i];
     const ring = [];
     for (let s = 0; s < fArcs; s++) {
       const a = (s / fArcs) * Math.PI * 2;
-      let vx = Math.sin(a) * st.rx;
-      let vy = Math.cos(a) * st.ry + st.y0;
-      let ao = 0.42 + 0.58 * (0.5 + 0.5 * Math.cos(a));
-      if (st.cockpit && Math.cos(a) > 0.56) {
-        vy = st.y0 - 0.18 + Math.cos(a) * 0.15;
-        vx *= 0.85;
-        ao = 0.24;
+      const sa = Math.sin(a), ca = Math.cos(a);
+      let vx = sa * st.rx;
+      let vy = ca * st.ry + st.y0;
+      let ao = 0.45 + 0.55 * (0.5 + 0.5 * ca);
+
+      // Authentic WWII radial fighter nose machine-gun troughs on upper engine deck (z: 1.5..3.1)
+      if (st.z >= 1.28 && st.z <= 3.15 && ca > 0.78 && Math.abs(sa) > 0.14 && Math.abs(sa) < 0.42) {
+        vy -= 0.055;
+        ao = 0.34;
       }
-      if (i >= 9) ao = 0.25;
+      // Deep open cockpit tub recessed inside fuselage with coaming rim
+      if (st.cockpit && ca > 0.48) {
+        const deep = Math.min(1.0, (ca - 0.48) / 0.25);
+        vx *= 1.0 - deep * 0.20;
+        vy = st.y0 + 0.36 - deep * 0.64;
+        ao = 0.18 + (1.0 - deep) * 0.35;
+      }
+      if (i >= 16) ao = 0.16; // dark engine bay interior
       ring.push(m.v(vx, vy, st.z, ao));
     }
     fRings.push(ring);
   }
   for (let i = 0; i < fRings.length - 1; i++) {
-    const r0 = fRings[i];
-    const r1 = fRings[i + 1];
+    const r0 = fRings[i], r1 = fRings[i + 1];
     for (let s = 0; s < fArcs; s++) {
       const ns = (s + 1) % fArcs;
       m.quad(r0[s], r1[s], r1[ns], r0[ns]);
     }
   }
-  const tailCap = m.v(0, 0.14, -5.15, 0.65);
+  const tailCap = m.v(0, 0.15, -5.30, 0.65);
   for (let s = 0; s < fArcs; s++) {
     const ns = (s + 1) % fArcs;
     m.tri(tailCap, fRings[0][ns], fRings[0][s]);
   }
-  const cowlCap = m.v(0, 0.0, 3.65, 0.20);
+  const cowlBackCap = m.v(0, 0.0, 3.58, 0.14);
   const lastRing = fRings[fRings.length - 1];
   for (let s = 0; s < fArcs; s++) {
     const ns = (s + 1) % fArcs;
-    m.tri(cowlCap, lastRing[s], lastRing[ns]);
+    m.tri(cowlBackCap, lastRing[s], lastRing[ns]);
   }
 
-  // Open Cockpit Canopy Arch Frames & Spine Brace
-  const hoops = [1.35, 0.65, -0.35];
-  for (let hi = 0; hi < hoops.length; hi++) {
-    const hz = hoops[hi];
-    const hRad = hi === 1 ? 0.42 : 0.36;
-    const hY = hi === 0 ? 0.58 : 0.60;
-    const pts = [];
-    for (let k = 0; k <= 6; k++) {
-      const th = -Math.PI * 0.48 + (k / 6) * Math.PI * 0.96;
-      pts.push(new THREE.Vector3(Math.sin(th) * hRad, hY + Math.cos(th) * hRad * 1.15, hz));
+  // Ventral chin oil-cooler scoop beneath engine cowl & dorsal radio mast antenna
+  addBox(0, -0.78, 3.65, 0.19, 0.12, 0.42, 0, 0.06, 0, 0.38, 0.68);
+  m.tube([new THREE.Vector3(0, 0.68, -0.95), new THREE.Vector3(0, 1.38, -1.12)], 6, (t) => 0.042 * (1.0 - t * 0.55), true, true, () => 0.85);
+
+  // ---- B. Exposed 9-Cylinder Finned Radial Engine, Crankcase & Cowl Exhaust Stubs ----
+  // Central radial crankcase gear housing inside open nose cowl
+  m.tube([new THREE.Vector3(0, 0, 3.68), new THREE.Vector3(0, 0, 4.48)], 12, (t) => 0.28 - t * 0.06, true, true, () => 0.32);
+  // 9 Star-burst Radial Engine Cylinders with Cooling Fins & Pushrod Tubes
+  for (let c = 0; c < 9; c++) {
+    const ang = (c / 9) * Math.PI * 2 + 0.2;
+    const dx = Math.sin(ang), dy = Math.cos(ang);
+    m.tube([
+      new THREE.Vector3(dx * 0.20, dy * 0.20, 4.02),
+      new THREE.Vector3(dx * 0.52, dy * 0.52, 4.02),
+    ], 8, (t) => 0.092 + Math.sin(t * Math.PI * 6.0) * 0.016, true, true, () => 0.30);
+    // Twin pushrod tubes on front face of each radial cylinder
+    m.tube([
+      new THREE.Vector3(dx * 0.22, dy * 0.22, 4.18),
+      new THREE.Vector3(dx * 0.50, dy * 0.50, 4.12),
+    ], 5, 0.018, true, true, () => 0.38);
+  }
+  // Flared exhaust collector stubs protruding along lower-side engine cowl ring
+  for (const side of [-1, 1]) {
+    for (let e = 0; e < 3; e++) {
+      const ey = -0.18 - e * 0.19;
+      const ex = side * Math.sqrt(Math.max(0.08, 0.74 * 0.74 - ey * ey));
+      m.tube([
+        new THREE.Vector3(ex * 0.92, ey, 3.22),
+        new THREE.Vector3(ex * 1.09, ey - 0.03, 2.95),
+      ], 6, 0.044, true, true, () => 0.26);
     }
-    m.tube(pts, 5, 0.042, true, true, () => 0.72);
   }
-  m.tube([new THREE.Vector3(0, 0.92, 1.28), new THREE.Vector3(0, 0.95, -0.35)], 5, 0.036, true, true, () => 0.75);
 
-  // B. Nose Spinner Dome & 3-Blade Bent Radial Propeller
+  // ---- C. Detailed Open Cockpit Interior + Shattered WWII "Greenhouse" Canopy Frame ----
+  // Armored Pilot Bucket Seat + Headrest Crash Pylon + Flight Control Stick + Instrument Panel Coaming
+  addBox(0, 0.12, -0.12, 0.24, 0.36, 0.05, 0, -0.18, 0, 0.34, 0.65); // Seat back
+  addBox(0, -0.18, 0.12, 0.25, 0.05, 0.24, 0, 0, 0, 0.28, 0.52);     // Seat pan
+  addBox(0, 0.58, -0.28, 0.11, 0.26, 0.10, 0, -0.14, 0, 0.42, 0.78); // Roll-over headrest armor pylon
+  // Flight control stick (joystick) rising from cockpit floor
+  m.tube([new THREE.Vector3(0, -0.22, 0.48), new THREE.Vector3(0.05, 0.24, 0.38)], 6, 0.028, true, true, () => 0.55);
+  // Instrument dashboard panel & gunsight ring
+  addBox(0, 0.44, 0.96, 0.38, 0.22, 0.08, 0, 0, 0, 0.26, 0.55);
+  addBox(0, 0.72, 1.06, 0.06, 0.11, 0.09, 0, 0, 0, 0.45, 0.75);
+
+  // Authentic WWII Multi-Pane "Greenhouse" Canopy Framing (open/shattered glass panes)
+  const canopyHoops = [
+    { z: 1.24, r: 0.37, y: 0.58, hScale: 1.02 }, // Forward armored windshield arch
+    { z: 0.84, r: 0.41, y: 0.60, hScale: 1.12 }, // Windshield rear bow
+    { z: 0.22, r: 0.42, y: 0.60, hScale: 1.14 }, // Sliding canopy mid arch
+    { z: -0.34, r: 0.38, y: 0.59, hScale: 1.08 }, // Aft canopy hoop
+    { z: -0.92, r: 0.30, y: 0.58, hScale: 0.92 }, // Rear turtledeck glazing frame
+  ];
+  for (let hi = 0; hi < canopyHoops.length; hi++) {
+    const h = canopyHoops[hi];
+    const pts = [];
+    for (let k = 0; k <= 8; k++) {
+      const th = -Math.PI * 0.48 + (k / 8) * Math.PI * 0.96;
+      pts.push(new THREE.Vector3(Math.sin(th) * h.r, h.y + Math.cos(th) * h.r * h.hScale, h.z));
+    }
+    m.tube(pts, 6, 0.032, true, true, () => 0.82);
+  }
+  // Canopy longitudinal spine bar + left/right canopy sill rails + windshield center brace
+  m.tube([new THREE.Vector3(0, 0.95, 1.24), new THREE.Vector3(0, 1.06, 0.84), new THREE.Vector3(0, 1.07, 0.22), new THREE.Vector3(0, 0.99, -0.34), new THREE.Vector3(0, 0.85, -0.92)], 6, 0.030, true, true, () => 0.84);
+  for (const side of [-1, 1]) {
+    m.tube([new THREE.Vector3(side * 0.37, 0.60, 1.24), new THREE.Vector3(side * 0.41, 0.62, 0.22), new THREE.Vector3(side * 0.30, 0.60, -0.92)], 5, 0.028, true, true, () => 0.78);
+    // Angled windshield A-pillars
+    m.tube([new THREE.Vector3(side * 0.20, 0.74, 1.38), new THREE.Vector3(side * 0.22, 1.02, 0.84)], 5, 0.026, true, true, () => 0.82);
+  }
+
+  // ---- D. Nose Spinner Cone & Sculpted Twisted-Airfoil 3-Blade Propeller (1 Blade Impact-Curled!) ----
   m.tube(
-    [new THREE.Vector3(0, 0, 3.85), new THREE.Vector3(0, 0, 4.65), new THREE.Vector3(0, 0, 4.98)],
-    10,
-    (t) => (t < 0.75 ? 0.24 : 0.24 * (1.0 - (t - 0.75) * 3.6)),
+    [new THREE.Vector3(0, 0, 4.35), new THREE.Vector3(0, 0, 4.78), new THREE.Vector3(0, 0, 5.14)],
+    14,
+    (t) => (t < 0.45 ? 0.26 : 0.26 * Math.pow(Math.max(0.0, 1.0 - (t - 0.45) / 0.55), 0.72)),
     false,
     true,
-    (t) => 0.65 + 0.35 * t
+    (t) => 0.62 + 0.38 * t
   );
+  // 3 Sculpted Twisted Flat-Airfoil Propeller Blades (wide chord paddle shape, NOT round sticks!)
   for (let b = 0; b < 3; b++) {
     const ang = b * (Math.PI * 2 / 3) + 0.35;
-    const dx = Math.sin(ang);
-    const dy = Math.cos(ang);
-    const isBent = b === 1;
-    const bladePts = isBent
-      ? [
-          new THREE.Vector3(dx * 0.14, dy * 0.14, 4.72),
-          new THREE.Vector3(dx * 0.68, dy * 0.65, 4.55),
-          new THREE.Vector3(dx * 1.05, dy * 0.88, 4.18),
-          new THREE.Vector3(dx * 1.24, dy * 0.92, 3.82),
-        ]
-      : [
-          new THREE.Vector3(dx * 0.14, dy * 0.14, 4.72),
-          new THREE.Vector3(dx * 0.75, dy * 0.75, 4.74),
-          new THREE.Vector3(dx * 1.48, dy * 1.48, 4.71),
-        ];
-    m.tube(bladePts, 5, (t) => 0.105 * (1.0 - t * 0.62) + 0.025, true, true, (t) => 0.62 + 0.38 * t);
+    const rx = Math.sin(ang), ry = Math.cos(ang); // radial outward dir
+    const tx = Math.cos(ang), ty = -Math.sin(ang); // tangential chord dir
+    const isBent = b === 1; // Bottom blade curls backward from reef impact!
+    const bSteps = 10;
+    const bSec = 8;
+    const bRings = [];
+    for (let i = 0; i <= bSteps; i++) {
+      const u = i / bSteps;
+      const rad = 0.16 + u * 1.46;
+      const bendZ = isBent ? -Math.pow(Math.max(0, u - 0.25), 1.85) * 1.18 : -u * 0.04;
+      const bendR = isBent ? rad * (1.0 - Math.pow(Math.max(0, u - 0.35), 2.0) * 0.28) : rad;
+      const chord = 0.065 + Math.sin(Math.pow(u, 0.65) * Math.PI * 0.92) * 0.135;
+      const thick = (0.048 * (1.0 - u * 0.78) + 0.008);
+      const pitch = 0.78 - u * 0.48; // realistic aerodynamic propeller twist from root to tip!
+      const cp = Math.cos(pitch), sp = Math.sin(pitch);
+      const cx = rx * bendR;
+      const cy = ry * bendR;
+      const cz = 4.76 + bendZ;
+      const ring = [];
+      for (let j = 0; j < bSec; j++) {
+        const a = (j / bSec) * Math.PI * 2;
+        const lc = Math.cos(a) * chord;
+        const lt = Math.sin(a) * thick;
+        const offT = lc * cp - lt * sp;
+        const offZ = lc * sp + lt * cp;
+        ring.push(m.v(cx + tx * offT, cy + ty * offT, cz + offZ, 0.58 + 0.42 * u));
+      }
+      bRings.push(ring);
+    }
+    for (let i = 0; i < bSteps; i++) {
+      for (let j = 0; j < bSec; j++) {
+        const nj = (j + 1) % bSec;
+        m.quad(bRings[i][j], bRings[i + 1][j], bRings[i + 1][nj], bRings[i][nj]);
+      }
+    }
+    const tipV = m.v(rx * (isBent ? 1.18 : 1.64), ry * (isBent ? 1.18 : 1.64), 4.76 + (isBent ? -0.78 : -0.05), 0.92);
+    for (let j = 0; j < bSec; j++) {
+      const nj = (j + 1) % bSec;
+      m.tri(tipV, bRings[bSteps][j], bRings[bSteps][nj]);
+    }
   }
 
-  // C. Tapered Low-Wing Monoplane Main Wings with Torn Corrosion Bays & Internal Spars/Ribs
+  // ---- E. High-Res 26-Span NACA-23012 Main Wings + Torn Skin Bays + Internal Spars/Ribs + 20mm Cannons + Flaps ----
   function buildWingSide(sideSign) {
-    const nSpan = 14;
-    const spanLen = 5.45;
-    const dihedral = 0.085;
-    const rootX = sideSign * 0.56;
-    const openBays = sideSign < 0 ? new Set([3, 4, 5, 9, 10]) : new Set([4, 5, 10]);
+    const nSpan = 26;
+    const spanLen = 5.65;
+    const dihedral = 0.088;
+    const rootX = sideSign * 0.54;
+    // Authentic WWII coral-wreck rectangular torn aluminum skin bays exposing internal rib structure (like Photo 1!)
+    const openBays = sideSign < 0
+      ? new Set([5, 6, 7, 8, 15, 16, 17, 18])
+      : new Set([6, 7, 8, 16, 17, 18]);
 
     function wingSection(u) {
       const absX = Math.abs(rootX) + u * spanLen;
       const x = sideSign * absX;
       const yBase = -0.24 + u * spanLen * dihedral;
-      const zLE = 1.65 - u * 0.52 - Math.pow(u, 3.0) * 0.35;
-      const chord = 2.38 * (1.0 - 0.56 * u) - Math.pow(u, 4.0) * 0.25;
-      const thick = 0.22 * (1.0 - 0.68 * u);
+      const zLE = 1.72 - u * 0.48 - Math.pow(u, 3.0) * 0.36;
+      const chord = 2.48 * (1.0 - 0.54 * u) - Math.pow(u, 4.0) * 0.24;
+      const rootFillet = u < 0.12 ? Math.pow(1.0 - u / 0.12, 2.0) * 0.14 : 0.0;
+      const thick = 0.24 * (1.0 - 0.66 * u) + rootFillet;
       return { x, yBase, zLE, chord, thick };
     }
 
-    const chordProfiles = [0.0, 0.24, 0.55, 0.84, 1.0, 0.84, 0.55, 0.24];
-    const chordYs = [0.0, 0.52, 0.48, 0.26, 0.0, -0.22, -0.34, -0.30];
-
+    // 14-point smooth NACA airfoil cross-section around chord
+    const foilN = 14;
     const wRings = [];
     for (let i = 0; i <= nSpan; i++) {
       const u = i / nSpan;
       const ws = wingSection(u);
       const ring = [];
-      for (let k = 0; k < 8; k++) {
-        const z = ws.zLE - chordProfiles[k] * ws.chord;
-        const y = ws.yBase + chordYs[k] * ws.thick;
-        const ao = k <= 4 ? 0.72 + 0.28 * (1.0 - Math.abs(k - 2) * 0.25) : 0.45;
+      for (let k = 0; k < foilN; k++) {
+        const a = (k / foilN) * Math.PI * 2;
+        const uChord = 0.5 - 0.5 * Math.cos(a); // 0 = LE -> 1 = TE -> 0 = LE
+        const isTop = k <= foilN / 2;
+        const yt = 5.0 * (0.2969 * Math.sqrt(Math.max(1e-4, uChord)) - 0.126 * uChord - 0.3516 * uChord * uChord + 0.2843 * Math.pow(uChord, 3) - 0.1015 * Math.pow(uChord, 4));
+        const camber = 0.18 * Math.sin(uChord * Math.PI);
+        const z = ws.zLE - uChord * ws.chord;
+        const y = ws.yBase + (isTop ? (yt + camber) : (-yt * 0.72 + camber * 0.4)) * ws.thick;
+        const ao = isTop ? 0.74 + 0.26 * (1.0 - Math.abs(uChord - 0.35)) : 0.42;
         ring.push(m.v(ws.x, y, z, ao));
       }
       wRings.push(ring);
     }
 
     for (let i = 0; i < nSpan; i++) {
-      const r0 = wRings[i];
-      const r1 = wRings[i + 1];
+      const r0 = wRings[i], r1 = wRings[i + 1];
       const isCutBay = openBays.has(i);
-      for (let k = 0; k < 8; k++) {
-        if (isCutBay && (k === 1 || k === 2)) continue;
-        const nk = (k + 1) % 8;
+      for (let k = 0; k < foilN; k++) {
+        // Tear open upper-mid aluminum skin panels across openBays (k=2..5) so internal wing ribs & spars shine through!
+        if (isCutBay && k >= 2 && k <= 5) continue;
+        const nk = (k + 1) % foilN;
         if (sideSign > 0) m.quad(r0[k], r1[k], r1[nk], r0[nk]);
         else m.quad(r0[k], r0[nk], r1[nk], r1[k]);
       }
     }
 
-    for (const sparFrac of [0.34, 0.66]) {
+    // Internal heavy aluminum Main Wing Spars + Stringers visible inside every torn corrosion bay!
+    for (const sparFrac of [0.28, 0.54, 0.76]) {
       const sPts = [];
       for (let i = 1; i <= nSpan - 1; i++) {
         const ws = wingSection(i / nSpan);
-        sPts.push(new THREE.Vector3(ws.x, ws.yBase + 0.03, ws.zLE - ws.chord * sparFrac));
+        sPts.push(new THREE.Vector3(ws.x, ws.yBase + 0.035, ws.zLE - ws.chord * sparFrac));
       }
-      m.tube(sPts, 4, (t) => 0.048 * (1.0 - t * 0.45), true, true, () => 0.45);
+      m.tube(sPts, 5, (t) => 0.044 * (1.0 - t * 0.42), true, true, () => 0.34);
     }
+    // Internal Chordwise Wing Ribs inside open torn bays
     openBays.forEach((bi) => {
-      const ws = wingSection((bi + 0.5) / nSpan);
-      const zFore = ws.zLE - ws.chord * 0.24;
-      const zAft = ws.zLE - ws.chord * 0.82;
-      m.tube(
-        [new THREE.Vector3(ws.x, ws.yBase + 0.04, zFore), new THREE.Vector3(ws.x, ws.yBase + 0.02, zAft)],
-        4,
-        0.036,
-        true,
-        true,
-        () => 0.55
-      );
+      for (const sub of [0.25, 0.75]) {
+        const ws = wingSection((bi + sub) / nSpan);
+        const zFore = ws.zLE - ws.chord * 0.18;
+        const zAft = ws.zLE - ws.chord * 0.86;
+        m.tube(
+          [
+            new THREE.Vector3(ws.x, ws.yBase + 0.055, zFore),
+            new THREE.Vector3(ws.x, ws.yBase + 0.068, 0.5 * (zFore + zAft)),
+            new THREE.Vector3(ws.x, ws.yBase + 0.025, zAft),
+          ],
+          5,
+          0.028,
+          true,
+          true,
+          () => 0.46
+        );
+      }
     });
 
+    // Smooth rounded elliptical wingtip fairing cap
     const wsTip = wingSection(1.0);
-    const tipCenter = m.v(wsTip.x + sideSign * 0.14, wsTip.yBase, wsTip.zLE - wsTip.chord * 0.48, 0.80);
+    const tipCenter = m.v(wsTip.x + sideSign * 0.18, wsTip.yBase + 0.01, wsTip.zLE - wsTip.chord * 0.46, 0.84);
     const tipRing = wRings[nSpan];
-    for (let k = 0; k < 8; k++) {
-      const nk = (k + 1) % 8;
+    for (let k = 0; k < foilN; k++) {
+      const nk = (k + 1) % foilN;
       if (sideSign > 0) m.tri(tipCenter, tipRing[nk], tipRing[k]);
       else m.tri(tipCenter, tipRing[k], tipRing[nk]);
     }
 
-    const aStart = wingSection(0.45);
-    const aEnd = wingSection(0.88);
-    m.tube(
-      [
-        new THREE.Vector3(aStart.x, aStart.yBase - 0.14, aStart.zLE - aStart.chord * 1.08),
-        new THREE.Vector3(aEnd.x, aEnd.yBase - 0.10, aEnd.zLE - aEnd.chord * 1.08),
-      ],
-      4,
-      (t) => 0.095 * (1.0 - t * 0.3),
-      true,
-      true,
-      () => 0.65
-    );
+    // Protruding 20mm Type-99 Wing Cannon Barrel on leading edge (u ~ 0.34) + Pitot tube on port wing!
+    const gunWs = wingSection(0.34);
+    m.tube([
+      new THREE.Vector3(gunWs.x, gunWs.yBase + 0.02, gunWs.zLE - 0.10),
+      new THREE.Vector3(gunWs.x, gunWs.yBase + 0.02, gunWs.zLE + 0.62),
+    ], 7, (t) => 0.036 - t * 0.010, true, true, () => 0.30);
+    if (sideSign < 0) {
+      const ptWs = wingSection(0.74);
+      m.tube([
+        new THREE.Vector3(ptWs.x, ptWs.yBase, ptWs.zLE),
+        new THREE.Vector3(ptWs.x, ptWs.yBase, ptWs.zLE + 0.48),
+      ], 5, 0.014, true, true, () => 0.55);
+    }
+
+    // Dropped Split Landing Flap (inner trailing edge) & Deflected Aileron Panel (outer trailing edge)
+    const f0 = wingSection(0.10), f1 = wingSection(0.46);
+    const fMidX = 0.5 * (f0.x + f1.x);
+    const fMidY = 0.5 * (f0.yBase + f1.yBase) - 0.10;
+    const fMidZ = 0.5 * (f0.zLE - f0.chord + f1.zLE - f1.chord) - 0.14;
+    addBox(fMidX, fMidY, fMidZ, Math.abs(f1.x - f0.x) * 0.48, 0.032, 0.22, sideSign * 0.10, 0.36, sideSign * dihedral, 0.46, 0.78);
+
+    const a0 = wingSection(0.50), a1 = wingSection(0.90);
+    const aMidX = 0.5 * (a0.x + a1.x);
+    const aMidY = 0.5 * (a0.yBase + a1.yBase) - 0.04;
+    const aMidZ = 0.5 * (a0.zLE - a0.chord + a1.zLE - a1.chord) - 0.10;
+    addBox(aMidX, aMidY, aMidZ, Math.abs(a1.x - a0.x) * 0.47, 0.028, 0.18, sideSign * 0.12, sideSign > 0 ? 0.18 : -0.14, sideSign * dihedral, 0.50, 0.82);
   }
   buildWingSide(-1);
   buildWingSide(1);
 
-  // D. Empennage: Vertical Fin / Rudder + Horizontal Stabilizers
-  const vFinPts = [
-    [0.0, 0.15, -3.55],
-    [0.0, 1.05, -4.15],
-    [0.0, 1.85, -4.65],
-  ];
-  m.tube(vFinPts.map((p) => new THREE.Vector3(p[0], p[1], p[2])), 4, (t) => 0.24 * (1.0 - t * 0.65), true, true, () => 0.72);
-  m.tube(
-    [new THREE.Vector3(-2.05, 0.16, -4.55), new THREE.Vector3(0, 0.18, -4.10), new THREE.Vector3(2.05, 0.16, -4.55)],
-    4,
-    (t) => 0.26 - Math.abs(t - 0.5) * 0.34,
-    true,
-    true,
-    () => 0.72
-  );
+  // ---- F. Sculpted Airfoil Empennage: Vertical Fin + Deflected Rudder + Horizontal Stabilizers & Elevators ----
+  // 1. Vertical Stabilizer & slightly deflected Rudder (lofted airfoil, NOT a crude 4-sided tube!)
+  {
+    const vSteps = 10;
+    const vFoil = 10;
+    const vRings = [];
+    for (let i = 0; i <= vSteps; i++) {
+      const u = i / vSteps;
+      const y = 0.14 + u * 1.92;
+      const zLE = -3.32 - Math.pow(u, 1.15) * 1.02;
+      const chord = 1.62 * (1.0 - u * 0.52) * (u > 0.82 ? Math.cos(((u - 0.82) / 0.18) * Math.PI * 0.46) : 1.0);
+      const thick = 0.115 * (1.0 - u * 0.72) + 0.012;
+      const ring = [];
+      for (let k = 0; k < vFoil; k++) {
+        const a = (k / vFoil) * Math.PI * 2;
+        const uc = 0.5 - 0.5 * Math.cos(a);
+        const side = Math.sin(a) >= 0 ? 1 : -1;
+        const yt = Math.sin(Math.pow(uc, 0.65) * Math.PI) * thick;
+        // Slight realistic rudder deflection to port on trailing 38% of fin
+        const rudderSwing = uc > 0.62 ? (uc - 0.62) * 0.24 : 0.0;
+        ring.push(m.v(side * yt + rudderSwing, y, zLE - uc * chord, 0.64 + 0.34 * u));
+      }
+      vRings.push(ring);
+    }
+    for (let i = 0; i < vSteps; i++) {
+      for (let k = 0; k < vFoil; k++) {
+        const nk = (k + 1) % vFoil;
+        m.quad(vRings[i][k], vRings[i + 1][k], vRings[i + 1][nk], vRings[i][nk]);
+      }
+    }
+    const vTip = m.v(0.05, 2.10, -4.55, 0.90);
+    for (let k = 0; k < vFoil; k++) {
+      const nk = (k + 1) % vFoil;
+      m.tri(vTip, vRings[vSteps][k], vRings[vSteps][nk]);
+    }
+  }
+
+  // 2. Swept Airfoil Horizontal Stabilizers & Drooping Elevators (Left & Right)
+  for (const side of [-1, 1]) {
+    const hSteps = 10;
+    const hFoil = 10;
+    const hRings = [];
+    for (let i = 0; i <= hSteps; i++) {
+      const u = i / hSteps;
+      const x = side * (0.14 + u * 2.08);
+      const yBase = 0.18 + u * 0.04;
+      const zLE = -3.72 - u * 0.42;
+      const chord = 1.12 * (1.0 - u * 0.48) * (u > 0.84 ? Math.cos(((u - 0.84) / 0.16) * Math.PI * 0.46) : 1.0);
+      const thick = 0.085 * (1.0 - u * 0.70) + 0.010;
+      const ring = [];
+      for (let k = 0; k < hFoil; k++) {
+        const a = (k / hFoil) * Math.PI * 2;
+        const uc = 0.5 - 0.5 * Math.cos(a);
+        const topSign = Math.sin(a) >= 0 ? 1 : -1;
+        const yt = Math.sin(Math.pow(uc, 0.65) * Math.PI) * thick;
+        // Gravity-drooped elevator along trailing 36% of tailplane
+        const elevDroop = uc > 0.64 ? -(uc - 0.64) * 0.16 : 0.0;
+        ring.push(m.v(x, yBase + topSign * yt + elevDroop, zLE - uc * chord, topSign > 0 ? 0.84 : 0.48));
+      }
+      hRings.push(ring);
+    }
+    for (let i = 0; i < hSteps; i++) {
+      for (let k = 0; k < hFoil; k++) {
+        const nk = (k + 1) % hFoil;
+        if (side > 0) m.quad(hRings[i][k], hRings[i + 1][k], hRings[i + 1][nk], hRings[i][nk]);
+        else m.quad(hRings[i][k], hRings[i][nk], hRings[i + 1][nk], hRings[i + 1][k]);
+      }
+    }
+    const hTip = m.v(side * 2.28, 0.22, -4.35, 0.82);
+    for (let k = 0; k < hFoil; k++) {
+      const nk = (k + 1) % hFoil;
+      if (side > 0) m.tri(hTip, hRings[hSteps][nk], hRings[hSteps][k]);
+      else m.tri(hTip, hRings[hSteps][k], hRings[hSteps][nk]);
+    }
+  }
+
+  // Fixed rear tailwheel strut under tailpost
+  m.tube([new THREE.Vector3(0, -0.04, -4.65), new THREE.Vector3(0, -0.36, -4.78)], 6, 0.042, true, true, () => 0.32);
 
   return m.build();
 }
