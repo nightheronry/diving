@@ -3,63 +3,117 @@ import { MEDIUM_GLSL } from './env/medium.js';
 import { bindSharedUniforms, rseed, rnd, rr } from './env/terrain.js';
 
 // ============================================================================
-// AAA-Grade Anatomical Shark Builder
-// High-Res Sculpted Fusiform Body + Seamless Filleted Hydrofoil Fins +
-// 5 Branchial Gill Arches + Recessed Nostril Nares + Jaws/Gingiva/Teeth +
-// Supraorbital Brow Socket & Iris/Pupil + Pre-Caudal Lateral Keels
+// Shared Mikkelsen Surface-Gradient Bump Mapping (4K-Equivalent Analytic Relief)
+// ============================================================================
+const SURFACE_GRADIENT_BUMP_GLSL = `
+  vec3 perturbNormalBump(vec3 surfPos, vec3 surfNorm, float heightVal, float bumpStrength) {
+    vec3 dPosX = dFdx(surfPos);
+    vec3 dPosY = dFdy(surfPos);
+    vec3 r1 = cross(dPosY, surfNorm);
+    vec3 r2 = cross(surfNorm, dPosX);
+    float det = dot(dPosX, r1);
+    if (abs(det) < 1e-6) return surfNorm;
+    float dHdx = dFdx(heightVal);
+    float dHdy = dFdy(heightVal);
+    vec3 surfGrad = sign(det) * (dHdx * r1 + dHdy * r2) / max(abs(det), 1e-5);
+    // Clamp extreme grazing-angle triangle-edge derivatives so zero black 1px speckles ever appear
+    float gLen = length(surfGrad);
+    if (gLen > 4.2) surfGrad *= 4.2 / gLen;
+    return normalize(surfNorm - bumpStrength * surfGrad);
+  }
+`;
+
+// ============================================================================
+// GTA-6-Grade Anatomical Apex Shark Builder (Carcharodon / Pelagic Reef Shark)
+// High-Res Sculpted Fusiform Body (136x60) + Auto-Outward-Wound Watertight
+// NACA-0012 Hydrofoil Fins + 5 Sculpted Branchial Gill Arches + Recessed Nares +
+// Parabolic Jaw Cavity with 36 Serrated Enamel Teeth + Sculpted Orbital Eyes +
+// 2 Symbiotic Remora Suckerfish (Zero Shared-Vertex Material Bleed!)
 // ============================================================================
 function buildAnatomicalSharkGeometry() {
   const pos = [];
   const spineCoord = []; // vec2(tAlongSpine, swimAmpWeight)
-  const partId = []; // 0 = dermal skin, 1 = eye/iris, 2 = gill slit interior, 3 = enamel teeth, 4 = inner mouth/gingiva, 5 = thin fin trailing edge
+  // Clean continuous weights: x = finEdgeThin, y = gillRecess, z = mouthCavity, w = hardPartId (disconnected meshes only: 0=skin, 1=eye, 2=teeth, 3=remora)
+  const matWeights = [];
   const idx = [];
 
-  function pushV(x, y, z, t, sw, part = 0) {
+  function pushV(x, y, z, t, sw, finEdge = 0, gill = 0, mouth = 0, hardId = 0) {
     const id = pos.length / 3;
     pos.push(x, y, z);
     spineCoord.push(t, sw);
-    partId.push(part);
+    matWeights.push(finEdge, gill, mouth, hardId);
     return id;
   }
 
-  // ---- 1. High-Resolution Continuous Body Fusiform Loft (Nose at +Z = +3.25, Peduncle at -Z = -2.30) ----
-  const nLen = 96;
-  const nRad = 48;
+  // Ensures any closed lofted appendage (fins, remoras) has 100% outward-pointing CCW normals
+  function ensureOutwardWinding(startIdxOffset) {
+    let signedVol6 = 0;
+    let cx = 0, cy = 0, cz = 0;
+    let vCount = 0;
+    for (let k = startIdxOffset; k < idx.length; k += 3) {
+      const i0 = idx[k] * 3, i1 = idx[k + 1] * 3, i2 = idx[k + 2] * 3;
+      cx += pos[i0] + pos[i1] + pos[i2];
+      cy += pos[i0 + 1] + pos[i1 + 1] + pos[i2 + 1];
+      cz += pos[i0 + 2] + pos[i1 + 2] + pos[i2 + 2];
+      vCount += 3;
+    }
+    if (vCount === 0) return;
+    cx /= vCount; cy /= vCount; cz /= vCount;
+    for (let k = startIdxOffset; k < idx.length; k += 3) {
+      const i0 = idx[k] * 3, i1 = idx[k + 1] * 3, i2 = idx[k + 2] * 3;
+      const ax = pos[i0] - cx, ay = pos[i0 + 1] - cy, az = pos[i0 + 2] - cz;
+      const bx = pos[i1] - cx, by = pos[i1 + 1] - cy, bz = pos[i1 + 2] - cz;
+      const dx = pos[i2] - cx, dy = pos[i2 + 1] - cy, dz = pos[i2 + 2] - cz;
+      // Triple product a · (b x d)
+      signedVol6 += ax * (by * dz - bz * dy) + ay * (bz * dx - bx * dz) + az * (bx * dy - by * dx);
+    }
+    if (signedVol6 < 0) {
+      for (let k = startIdxOffset; k < idx.length; k += 3) {
+        const tmp = idx[k + 1];
+        idx[k + 1] = idx[k + 2];
+        idx[k + 2] = tmp;
+      }
+    }
+  }
+
+  // ---- 1. High-Resolution Continuous Body Fusiform Loft (Nose +3.28 -> Peduncle -2.32) ----
+  const nLen = 136;
+  const nRad = 60;
   const bodyRings = [];
 
   function bodyRadius(t) {
-    if (t < 0.035) {
-      return Math.pow(Math.max(0.008, t / 0.035), 0.54) * 0.22;
+    if (t < 0.036) {
+      return Math.pow(Math.max(0.007, t / 0.036), 0.56) * 0.225;
     } else if (t < 0.31) {
-      const u = (t - 0.035) / 0.275;
-      return 0.22 + Math.sin(u * Math.PI * 0.5) * 0.45;
+      const u = (t - 0.036) / 0.274;
+      return 0.225 + Math.sin(u * Math.PI * 0.5) * 0.475;
     } else if (t < 0.84) {
       const u = (t - 0.31) / 0.53;
-      return 0.67 * (1.0 - Math.pow(u, 1.38) * 0.83);
+      return 0.70 * (1.0 - Math.pow(u, 1.35) * 0.835);
     } else {
       const u = (t - 0.84) / 0.16;
-      return Math.max(0.032, 0.114 * (1.0 - u * 0.72));
+      return Math.max(0.030, 0.116 * (1.0 - u * 0.74));
     }
   }
 
   for (let i = 0; i <= nLen; i++) {
     const t = i / nLen;
-    const z = 3.25 - t * 5.55; // +3.25 (snout tip) -> -2.30 (caudal peduncle root)
+    const z = 3.28 - t * 5.60; // +3.28 (snout tip) -> -2.32 (caudal peduncle root)
     const baseR = bodyRadius(t);
 
-    // Pre-caudal lateral keels along peduncle (t in [0.74..0.96])
-    const pedFactor = Math.max(0, (t - 0.65) / 0.35);
-    const keelBulge = t > 0.74 && t < 0.96 ? Math.sin(((t - 0.74) / 0.22) * Math.PI) * 0.065 : 0.0;
-    const rx = baseR * (0.88 + 0.18 * Math.sin(t * Math.PI)) * (1.0 - 0.18 * pedFactor) + keelBulge;
-    const ry = baseR * (1.14 - 0.24 * pedFactor);
+    // Pre-caudal lateral keels along peduncle (t in [0.74..0.97])
+    const pedFactor = Math.max(0, (t - 0.64) / 0.36);
+    const keelBulge = t > 0.74 && t < 0.97 ? Math.sin(((t - 0.74) / 0.23) * Math.PI) * 0.078 : 0.0;
+    const rx = baseR * (0.90 + 0.18 * Math.sin(t * Math.PI)) * (1.0 - 0.20 * pedFactor) + keelBulge;
+    const ry = baseR * (1.16 - 0.24 * pedFactor);
 
-    // Conical predatory rostrum overhang & powerful dorsal muscular hump over pectoral girdle
-    const centerY = t < 0.14
-      ? 0.02 - 0.05 * Math.pow(1.0 - t / 0.14, 1.8)
-      : Math.sin(t * Math.PI) * 0.085 + (t > 0.22 && t < 0.48 ? Math.sin(((t - 0.22) / 0.26) * Math.PI) * 0.035 : 0.0);
+    // Conical predatory snout overhang + powerful Great White dorsal epaxial shoulder bulk
+    const centerY = t < 0.145
+      ? 0.025 - 0.055 * Math.pow(1.0 - t / 0.145, 1.75)
+      : Math.sin(t * Math.PI) * 0.088 + (t > 0.20 && t < 0.50 ? Math.sin(((t - 0.20) / 0.30) * Math.PI) * 0.052 : 0.0);
 
     // Biomechanical carangiform wave envelope
-    const sw = t < 0.20 ? 0.03 * (t / 0.20) : 0.03 + 0.97 * Math.pow((t - 0.20) / 0.80, 1.72);
+    const sw = t < 0.19 ? 0.028 * (t / 0.19) : 0.028 + 0.972 * Math.pow((t - 0.19) / 0.81, 1.70);
 
     const ring = [];
     for (let s = 0; s < nRad; s++) {
@@ -70,79 +124,82 @@ function buildAnatomicalSharkGeometry() {
 
       let x = sa * rx;
       let y = centerY + ca * ry;
-      let pType = 0;
+      let gillW = 0.0;
+      let mouthW = 0.0;
 
-      // Flattened conical underside of snout (rostrum)
-      if (t < 0.16 && ca < -0.15) {
-        const flatW = (1.0 - t / 0.16) * Math.min(1.0, (-ca - 0.15) / 0.65);
-        y = centerY + ca * ry * (1.0 - 0.32 * flatW);
+      // Flattened aerodynamic underside of conical snout (rostrum)
+      if (t < 0.165 && ca < -0.14) {
+        const flatW = (1.0 - t / 0.165) * Math.min(1.0, (-ca - 0.14) / 0.65);
+        y = centerY + ca * ry * (1.0 - 0.34 * flatW);
       }
 
-      // Supraorbital brow ridge & recessed eye socket at t ~ 0.095, ca ~ 0.18
-      if (t > 0.065 && t < 0.130 && absSa > 0.72 && ca > -0.05 && ca < 0.48) {
-        const dtEye = (t - 0.096) / 0.028;
-        const daEye = (ca - 0.16) / 0.22;
+      // Sculpted supraorbital brow ridge & recessed dark eye socket at t ~ 0.095, ca ~ 0.16
+      if (t > 0.062 && t < 0.132 && absSa > 0.70 && ca > -0.06 && ca < 0.48) {
+        const dtEye = (t - 0.095) / 0.027;
+        const daEye = (ca - 0.15) / 0.21;
         const rEye2 = dtEye * dtEye + daEye * daEye;
-        if (rEye2 < 1.2) {
-          const brow = daEye > 0.2 ? Math.exp(-rEye2 * 2.2) * 0.028 : -Math.exp(-rEye2 * 2.8) * 0.022;
+        if (rEye2 < 1.35) {
+          const brow = daEye > 0.18 ? Math.exp(-rEye2 * 2.2) * 0.032 : -Math.exp(-rEye2 * 3.0) * 0.028;
           x += Math.sign(sa) * brow;
         }
       }
 
-      // Nostril nares (nasal flaps) under rostrum at t ~ 0.048
-      if (t > 0.038 && t < 0.060 && absSa > 0.35 && absSa < 0.72 && ca < -0.45) {
-        y += 0.018;
-        pType = 2;
+      // Recessed nostril nares (nasal flaps) under rostrum at t ~ 0.048
+      if (t > 0.038 && t < 0.060 && absSa > 0.34 && absSa < 0.70 && ca < -0.44) {
+        const nEnv = Math.sin(((t - 0.038) / 0.022) * Math.PI) * Math.sin(((absSa - 0.34) / 0.36) * Math.PI);
+        y += 0.022 * nEnv;
+        gillW = Math.max(gillW, nEnv * 0.85);
       }
 
-      // Broad flatten belly in chest/midsection with paired ventral muscular ridges
-      if (ca < -0.1 && t > 0.14 && t < 0.72) {
+      // Broad hydrodynamic belly in chest/midsection
+      if (ca < -0.10 && t > 0.14 && t < 0.72) {
         y = centerY + ca * ry * 0.84;
       }
 
       // Lateral line muscular myomere groove & epaxial/hypaxial muscle definition along flank
-      if (t > 0.18 && t < 0.88 && absSa > 0.82 && Math.abs(ca - 0.08) < 0.28) {
-        const latGroove = Math.exp(-Math.pow((ca - 0.08) / 0.08, 2.0)) * 0.012;
-        const muscleBulge = Math.exp(-Math.pow((ca - 0.26) / 0.16, 2.0)) * 0.022;
-        x += Math.sign(sa) * (muscleBulge - latGroove);
+      if (t > 0.17 && t < 0.89 && absSa > 0.80 && Math.abs(ca - 0.08) < 0.32) {
+        const latGroove = Math.exp(-Math.pow((ca - 0.08) / 0.075, 2.0)) * 0.015;
+        const muscleBulge = Math.exp(-Math.pow((ca - 0.28) / 0.17, 2.0)) * 0.028;
+        const lowerBulge = Math.exp(-Math.pow((ca + 0.12) / 0.16, 2.0)) * 0.014;
+        x += Math.sign(sa) * (muscleBulge + lowerBulge - latGroove);
       }
 
-      // Sharp lateral caudal keel ridge on peduncle (t in [0.76..0.96])
-      if (t > 0.76 && t < 0.96 && absSa > 0.88 && Math.abs(ca) < 0.26) {
-        const keelPinch = Math.pow(Math.max(0, 1.0 - Math.abs(ca) / 0.26), 2.0) * keelBulge * 0.85;
+      // Sharp horizontal lateral caudal keel ridge on peduncle (t in [0.75..0.97])
+      if (t > 0.75 && t < 0.97 && absSa > 0.86 && Math.abs(ca) < 0.25) {
+        const keelPinch = Math.pow(Math.max(0, 1.0 - Math.abs(ca) / 0.25), 2.2) * keelBulge * 0.92;
         x += Math.sign(sa) * keelPinch;
       }
 
-      // Deep predatory crescent mouth cavity & upper/lower jaw arch (t in [0.065, 0.155])
-      if (t > 0.062 && t < 0.155 && ca < -0.42) {
-        const uMouth = (t - 0.062) / 0.093;
-        const mw = Math.sin(uMouth * Math.PI) * Math.min(1.0, (-ca - 0.42) / 0.38);
-        // Carve recessed oral cavity & labial furrow
-        y += mw * 0.105;
-        x *= 1.0 - mw * 0.11;
-        pType = (uMouth > 0.18 && uMouth < 0.82 && ca < -0.62) ? 4 : 2;
+      // Deep predatory parabolic mouth cavity & labial jaw folds (t in [0.062, 0.160])
+      if (t > 0.060 && t < 0.160 && ca < -0.40) {
+        const uMouth = (t - 0.060) / 0.100;
+        const mw = Math.sin(uMouth * Math.PI) * Math.min(1.0, (-ca - 0.40) / 0.36);
+        y += mw * 0.125;
+        x *= 1.0 - mw * 0.10;
+        mouthW = Math.min(1.0, mw * 1.35);
       }
 
-      // Five sculpted 3D branchial gill slits & overlapping gill septa (t in [0.20..0.305])
-      if (t > 0.200 && t < 0.305 && absSa > 0.72 && ca > -0.46 && ca < 0.38) {
-        const gillCoord = ((t - 0.200) / 0.105) * 5.0;
+      // Five sculpted 3D branchial gill slits & overlapping muscular gill arches (t in [0.195..0.305])
+      if (t > 0.195 && t < 0.305 && absSa > 0.70 && ca > -0.46 && ca < 0.38) {
+        // Gentle posterior sweep of each curved gill slit from top to bottom
+        const tCurved = t - (ca + 0.04) * 0.008;
+        const gillCoord = ((tCurved - 0.195) / 0.110) * 5.0;
         const gillIdx = Math.floor(gillCoord);
         const gillFrac = gillCoord - gillIdx;
-        const vertEnv = Math.sin(((ca + 0.46) / 0.84) * Math.PI);
-        if (gillIdx >= 0 && gillIdx < 5 && vertEnv > 0.05) {
-          // Fleshy anterior gill flap overlapping recessed dark branchial slit
-          if (gillFrac > 0.58 && gillFrac < 0.88) {
-            const depth = Math.sin(((gillFrac - 0.58) / 0.30) * Math.PI) * vertEnv;
-            x *= 1.0 - 0.095 * depth;
-            pType = 2;
-          } else if (gillFrac <= 0.58) {
-            const bulge = Math.sin((gillFrac / 0.58) * Math.PI) * vertEnv;
-            x *= 1.0 + 0.022 * bulge;
+        const vertEnv = Math.sin(Math.max(0, Math.min(1, (ca + 0.46) / 0.84)) * Math.PI);
+        if (gillIdx >= 0 && gillIdx < 5 && vertEnv > 0.04) {
+          if (gillFrac > 0.56 && gillFrac < 0.88) {
+            const depth = Math.sin(((gillFrac - 0.56) / 0.32) * Math.PI) * vertEnv;
+            x *= 1.0 - 0.088 * depth;
+            gillW = Math.max(gillW, depth);
+          } else if (gillFrac <= 0.56) {
+            const bulge = Math.sin((gillFrac / 0.56) * Math.PI) * vertEnv;
+            x *= 1.0 + 0.024 * bulge;
           }
         }
       }
 
-      ring.push(pushV(x, y, z, t, sw, pType));
+      ring.push(pushV(x, y, z, t, sw, 0.0, gillW, mouthW, 0));
     }
     bodyRings.push(ring);
   }
@@ -156,38 +213,45 @@ function buildAnatomicalSharkGeometry() {
     }
   }
 
-  // Cap snout tip smoothly
-  const noseTip = pushV(0, 0.015, 3.31, 0.0, 0.0, 0);
+  // Cap snout tip & caudal peduncle cleanly
+  const noseTip = pushV(0, 0.020, 3.34, 0.0, 0.0, 0, 0, 0, 0);
   const firstR = bodyRings[0];
   for (let s = 0; s < nRad; s++) {
     const ns = (s + 1) % nRad;
     idx.push(noseTip, firstR[ns], firstR[s]);
   }
+  const tailCap = pushV(0, 0.0, -2.38, 1.0, 1.0, 0, 0, 0, 0);
+  const lastR = bodyRings[bodyRings.length - 1];
+  for (let s = 0; s < nRad; s++) {
+    const ns = (s + 1) % nRad;
+    idx.push(tailCap, lastR[s], lastR[ns]);
+  }
 
-  // ---- 1b. Upper & Lower Serrated Triangular Enamel Teeth Rows inside Jaw (partId = 3) ----
-  const nTeeth = 14;
+  // ---- 1b. 36 Serrated Triangular Great White Enamel Teeth (Disconnected hardId = 2) ----
+  const nTeeth = 18;
   for (let row = 0; row < 2; row++) {
     const isUpper = row === 0;
     for (let k = 0; k < nTeeth; k++) {
-      const u = (k / (nTeeth - 1)) * 2.0 - 1.0; // -1 (left corner) -> +1 (right corner)
+      const u = (k / (nTeeth - 1)) * 2.0 - 1.0;
       const arc = 1.0 - u * u;
-      const tz = (isUpper ? 2.86 : 2.79) - (1.0 - arc) * 0.34;
-      const tx = u * (isUpper ? 0.24 : 0.21);
-      const ty = (isUpper ? -0.19 : -0.26) + (1.0 - arc) * 0.04;
-      const tSpine = (3.25 - tz) / 5.55;
-      const sw = 0.03 * (tSpine / 0.20);
-      const wT = 0.012 * (0.7 + 0.3 * arc);
-      const hT = (isUpper ? -0.036 : 0.030) * (0.75 + 0.25 * arc);
-
-      const b0 = pushV(tx - wT, ty, tz, tSpine, sw, 3);
-      const b1 = pushV(tx + wT, ty, tz, tSpine, sw, 3);
-      const b2 = pushV(tx, ty, tz - wT * 0.9, tSpine, sw, 3);
-      const tip = pushV(tx, ty + hT, tz + 0.004, tSpine, sw, 3);
-      idx.push(b0, b1, tip, b1, b2, tip, b2, b0, tip);
+      const tz = (isUpper ? 2.88 : 2.81) - (1.0 - arc) * 0.36;
+      const tx = u * (isUpper ? 0.255 : 0.22);
+      const ty = (isUpper ? -0.185 : -0.268) + (1.0 - arc) * 0.045;
+      const tSpine = (3.28 - tz) / 5.60;
+      const sw = 0.028 * (tSpine / 0.19);
+      const wT = 0.0135 * (0.68 + 0.34 * arc);
+      const hT = (isUpper ? -0.042 : 0.034) * (0.72 + 0.30 * arc);
+      const toothStart = idx.length;
+      const b0 = pushV(tx - wT, ty, tz + 0.004, tSpine, sw, 0, 0, 0, 2);
+      const b1 = pushV(tx + wT, ty, tz + 0.004, tSpine, sw, 0, 0, 0, 2);
+      const b2 = pushV(tx, ty, tz - wT * 0.95, tSpine, sw, 0, 0, 0, 2);
+      const tip = pushV(tx, ty + hT, tz - 0.006, tSpine, sw, 0, 0, 0, 2);
+      idx.push(b0, b1, tip, b1, b2, tip, b2, b0, tip, b0, b2, b1);
+      ensureOutwardWinding(toothStart);
     }
   }
 
-  // Helper to loft swept NACA hydrofoil fins with organic root fillets & thin trailing edge SSS tag
+  // Helper to loft watertight, capped, auto-outward-wound swept NACA-0012 hydrofoil fins
   function addFin({
     rootFrontZ,
     rootBackZ,
@@ -198,43 +262,55 @@ function buildAnatomicalSharkGeometry() {
     thickRoot,
     thickTip,
     mirrorX = false,
-    steps = 16,
-    segs = 18,
+    steps = 20,
+    segs = 22,
     tBase = 0.4,
     tTip = 0.45,
     curvePow = 0.88,
     hasNotch = false,
+    dorsalWear = false,
+    camberY = 0.0,
   }) {
     function buildSide(sign) {
+      const startIdx = idx.length;
       const rings = [];
+      let tipX = 0, tipY = 0, tipZ = 0, tipT = tTip, tipSw = 0;
+
       for (let i = 0; i <= steps; i++) {
-        const u = i / steps; // 0 = filleted root, 1 = fin tip
-        // Falcate curved leading edge & concave trailing edge
-        const leadCurve = Math.pow(u, 1.12);
-        const trailCurve = Math.pow(u, 0.82);
+        const u = i / steps;
+        const leadCurve = Math.pow(u, 1.15);
+        const trailCurve = Math.pow(u, 0.80);
         let zFront = rootFrontZ * (1 - leadCurve) + (rootFrontZ - sweepBack) * leadCurve;
         let zBack = rootBackZ * (1 - trailCurve) + (rootFrontZ - sweepBack - chordTip) * trailCurve;
 
-        // Authentic subterminal notch near upper caudal fin tip (u in [0.76..0.90])
-        if (hasNotch && u > 0.75 && u < 0.91) {
-          const nw = Math.sin(((u - 0.75) / 0.16) * Math.PI);
-          zBack += nw * 0.085;
+        // Subterminal notch near upper caudal fin tip
+        if (hasNotch && u > 0.74 && u < 0.90) {
+          const nw = Math.sin(((u - 0.74) / 0.16) * Math.PI);
+          zBack += nw * 0.095;
+        }
+        // Authentic healed battle nick on 1st dorsal fin trailing edge
+        if (dorsalWear && u > 0.44 && u < 0.56) {
+          const nw = Math.sin(((u - 0.44) / 0.12) * Math.PI);
+          zBack += nw * 0.048;
         }
 
-        const chord = Math.max(0.035, zFront - zBack);
+        const chord = Math.max(0.025, zFront - zBack);
         const px = sign * (rootPos[0] + tipOffset[0] * Math.pow(u, 0.94));
-        const py = rootPos[1] + tipOffset[1] * Math.pow(u, curvePow);
+        const py = rootPos[1] + tipOffset[1] * Math.pow(u, curvePow) + Math.sin(u * Math.PI) * camberY;
 
-        // Smooth anatomical root fillet flare for u < 0.22 so fin merges organically into body
-        const fillet = u < 0.22 ? Math.pow(1.0 - u / 0.22, 2.0) * 1.45 : 0.0;
-        const thick = (thickRoot * (1 - u) + thickTip * u) * (1.0 + fillet);
+        // Organic anatomical root fillet flare so fin blends cleanly into shark torso
+        const fillet = u < 0.24 ? Math.pow(1.0 - u / 0.24, 2.0) * 1.55 : 0.0;
+        const tipTaper = u > 0.88 ? Math.cos(((u - 0.88) / 0.12) * Math.PI * 0.48) : 1.0;
+        const thick = (thickRoot * (1 - u) + thickTip * u) * (1.0 + fillet) * tipTaper;
         const t = tBase + (tTip - tBase) * u;
-        const sw = t < 0.20 ? 0.03 * (t / 0.20) : 0.03 + 0.97 * Math.pow((t - 0.20) / 0.80, 1.72);
+        const sw = t < 0.19 ? 0.028 * (t / 0.19) : 0.028 + 0.972 * Math.pow((t - 0.19) / 0.81, 1.70);
+
+        tipX = px; tipY = py; tipZ = 0.5 * (zFront + zBack); tipT = t; tipSw = sw;
 
         const ring = [];
         for (let j = 0; j < segs; j++) {
           const a = (j / segs) * Math.PI * 2;
-          const uChord = Math.cos(a) * 0.5 + 0.5; // 0 = razor trailing edge, 1 = rounded leading edge
+          const uChord = Math.cos(a) * 0.5 + 0.5; // 0 = trailing edge, 1 = leading edge
           const naca =
             5.0 *
             (0.2969 * Math.sqrt(Math.max(1e-4, uChord)) -
@@ -248,10 +324,12 @@ function buildAnatomicalSharkGeometry() {
           const localZ = zBack + uChord * chord;
           const isVertical = Math.abs(tipOffset[1]) > Math.abs(tipOffset[0]);
           const vx = px + (isVertical ? foilOff : 0);
-          const vy = py + (isVertical ? 0 : foilOff * (sign > 0 ? 1 : -1));
-          // Tag trailing edge & outer fin tip (partId = 5) for translucent SSS & dark edge pigmentation
-          const finEdgeTag = (uChord < 0.28 || u > 0.72) ? 5.0 : 0.0;
-          ring.push(pushV(vx, vy, localZ, t, sw, finEdgeTag));
+          const vy = py + (isVertical ? 0 : foilOff);
+          // Smooth continuous thin-edge weight [0..1] for SSS & dusky fin margins (NEVER jumps to hardPartId!)
+          const trailFade = Math.max(0.0, 1.0 - uChord / 0.34);
+          const tipFade = Math.max(0.0, (u - 0.62) / 0.38);
+          const finEdgeW = Math.min(1.0, Math.max(trailFade * 0.92, tipFade * 0.85));
+          ring.push(pushV(vx, vy, localZ, t, sw, finEdgeW, 0.0, 0.0, 0));
         }
         rings.push(ring);
       }
@@ -261,31 +339,49 @@ function buildAnatomicalSharkGeometry() {
         const r1 = rings[i + 1];
         for (let j = 0; j < segs; j++) {
           const nj = (j + 1) % segs;
-          if (sign > 0) idx.push(r0[j], r0[nj], r1[nj], r0[j], r1[nj], r1[j]);
-          else idx.push(r0[j], r1[nj], r0[nj], r0[j], r1[j], r1[nj]);
+          idx.push(r0[j], r0[nj], r1[nj], r0[j], r1[nj], r1[j]);
         }
       }
+
+      // Close fin tip cleanly so fin is 100% watertight manifold
+      const tipCenter = pushV(tipX, tipY, tipZ, tipT, tipSw, 1.0, 0.0, 0.0, 0);
+      const endR = rings[steps];
+      for (let j = 0; j < segs; j++) {
+        const nj = (j + 1) % segs;
+        idx.push(tipCenter, endR[j], endR[nj]);
+      }
+
+      // Close root cap inside torso so signed volume check is exact
+      const rootCenter = pushV(sign * rootPos[0], rootPos[1], 0.5 * (rootFrontZ + rootBackZ), tBase, 0.05, 0.0, 0.0, 0.0, 0);
+      const startR = rings[0];
+      for (let j = 0; j < segs; j++) {
+        const nj = (j + 1) % segs;
+        idx.push(rootCenter, startR[nj], startR[j]);
+      }
+
+      ensureOutwardWinding(startIdx);
     }
 
     buildSide(1);
     if (mirrorX) buildSide(-1);
   }
 
-  // ---- 2. First Dorsal Fin (Iconic tall falcate apex blade) ----
+  // ---- 2. First Dorsal Fin (Iconic tall falcate apex blade with subtle healed battle nick) ----
   addFin({
-    rootFrontZ: 1.22,
-    rootBackZ: 0.14,
+    rootFrontZ: 1.24,
+    rootBackZ: 0.12,
     rootPos: [0, 0.44],
-    tipOffset: [0, 0.96],
+    tipOffset: [0, 1.02],
     sweepBack: 0.96,
-    chordTip: 0.18,
-    thickRoot: 0.115,
-    thickTip: 0.012,
+    chordTip: 0.16,
+    thickRoot: 0.125,
+    thickTip: 0.011,
     mirrorX: false,
-    steps: 18,
-    segs: 20,
+    steps: 22,
+    segs: 24,
     tBase: 0.39,
     tTip: 0.49,
+    dorsalWear: true,
   });
 
   // ---- 3. Second Dorsal Fin & Anal Fin ----
@@ -293,12 +389,14 @@ function buildAnatomicalSharkGeometry() {
     rootFrontZ: -0.96,
     rootBackZ: -1.38,
     rootPos: [0, 0.18],
-    tipOffset: [0, 0.30],
+    tipOffset: [0, 0.31],
     sweepBack: 0.36,
-    chordTip: 0.08,
-    thickRoot: 0.042,
+    chordTip: 0.075,
+    thickRoot: 0.044,
     thickTip: 0.007,
     mirrorX: false,
+    steps: 14,
+    segs: 16,
     tBase: 0.78,
     tTip: 0.83,
   });
@@ -307,99 +405,104 @@ function buildAnatomicalSharkGeometry() {
     rootFrontZ: -1.06,
     rootBackZ: -1.40,
     rootPos: [0, -0.15],
-    tipOffset: [0, -0.25],
+    tipOffset: [0, -0.26],
     sweepBack: 0.30,
-    chordTip: 0.075,
-    thickRoot: 0.038,
+    chordTip: 0.07,
+    thickRoot: 0.040,
     thickTip: 0.007,
     mirrorX: false,
+    steps: 14,
+    segs: 16,
     tBase: 0.79,
     tTip: 0.84,
   });
 
-  // ---- 4. Falcate Pectoral Wings (Broad swept hydrofoils) ----
+  // ---- 4. Broad Swept Pectoral Hydrofoil Wings (Guaranteed Outward CCW Normals!) ----
   addFin({
-    rootFrontZ: 1.58,
-    rootBackZ: 0.76,
-    rootPos: [0.36, -0.25],
-    tipOffset: [1.42, -0.38],
-    sweepBack: 1.18,
-    chordTip: 0.14,
-    thickRoot: 0.105,
-    thickTip: 0.011,
+    rootFrontZ: 1.62,
+    rootBackZ: 0.74,
+    rootPos: [0.34, -0.25],
+    tipOffset: [1.48, -0.36],
+    sweepBack: 1.22,
+    chordTip: 0.13,
+    thickRoot: 0.112,
+    thickTip: 0.010,
     mirrorX: true,
-    steps: 18,
-    segs: 20,
+    steps: 22,
+    segs: 24,
     tBase: 0.31,
     tTip: 0.43,
+    camberY: 0.045,
   });
 
   // ---- 5. Pelvic Stabilizer Fins ----
   addFin({
-    rootFrontZ: 0.06,
+    rootFrontZ: 0.08,
     rootBackZ: -0.36,
-    rootPos: [0.22, -0.26],
-    tipOffset: [0.38, -0.22],
+    rootPos: [0.21, -0.26],
+    tipOffset: [0.40, -0.22],
     sweepBack: 0.36,
-    chordTip: 0.075,
-    thickRoot: 0.042,
+    chordTip: 0.07,
+    thickRoot: 0.044,
     thickTip: 0.008,
     mirrorX: true,
+    steps: 14,
+    segs: 16,
     tBase: 0.58,
     tTip: 0.64,
   });
 
-  // ---- 6. Asymmetric Crescent Caudal Tail Fin (Upper Lobe with Subterminal Notch + Lower Lobe) ----
+  // ---- 6. Asymmetric Lunate Crescent Caudal Tail Fin ----
   addFin({
-    rootFrontZ: -2.08,
+    rootFrontZ: -2.06,
     rootBackZ: -2.48,
     rootPos: [0, 0.03],
-    tipOffset: [0, 1.16],
+    tipOffset: [0, 1.22],
     sweepBack: 0.98,
-    chordTip: 0.13,
-    thickRoot: 0.082,
+    chordTip: 0.12,
+    thickRoot: 0.086,
     thickTip: 0.008,
     mirrorX: false,
-    steps: 18,
-    segs: 20,
+    steps: 22,
+    segs: 22,
     tBase: 0.94,
     tTip: 1.07,
     hasNotch: true,
   });
 
   addFin({
-    rootFrontZ: -2.10,
+    rootFrontZ: -2.08,
     rootBackZ: -2.46,
     rootPos: [0, -0.02],
-    tipOffset: [0, -0.84],
+    tipOffset: [0, -0.88],
     sweepBack: 0.72,
-    chordTip: 0.11,
-    thickRoot: 0.075,
+    chordTip: 0.10,
+    thickRoot: 0.078,
     thickTip: 0.008,
     mirrorX: false,
-    steps: 16,
-    segs: 18,
+    steps: 18,
+    segs: 20,
     tBase: 0.94,
     tTip: 1.04,
   });
 
-  // ---- 7. Multi-Ring Glossy Ocular Eyes tucked under Supraorbital Brow ----
-  const eyeGeo = new THREE.SphereGeometry(0.062, 16, 12);
+  // ---- 7. Multi-Ring Glossy Obsidian Eyes tucked inside Brow Sockets (Disconnected hardId = 1) ----
+  const eyeGeo = new THREE.SphereGeometry(0.064, 18, 14);
   const eyePos = eyeGeo.getAttribute('position');
   const eyeIdx = eyeGeo.index;
   for (const side of [-1, 1]) {
     const baseV = pos.length / 3;
-    const ex = side * 0.265;
-    const ey = 0.068;
-    const ez = 2.72;
+    const ex = side * 0.272;
+    const ey = 0.072;
+    const ez = 2.75;
     for (let i = 0; i < eyePos.count; i++) {
       pushV(
         ex + eyePos.getX(i) * 0.72,
         ey + eyePos.getY(i) * 0.96,
-        ez + eyePos.getZ(i) * 1.06,
+        ez + eyePos.getZ(i) * 1.08,
         0.095,
-        0.015,
-        1
+        0.014,
+        0, 0, 0, 1
       );
     }
     for (let i = 0; i < eyeIdx.count; i += 3) {
@@ -408,10 +511,57 @@ function buildAnatomicalSharkGeometry() {
   }
   eyeGeo.dispose();
 
+  // ---- 8. Two Symbiotic Remora Suckerfish Escorts swimming below Shark Pectoral & Flank (hardId = 3) ----
+  const remoraSpecs = [
+    { ox: 0.56, oy: -0.46, oz: 0.62, scale: 0.58 },
+    { ox: -0.48, oy: -0.42, oz: -0.18, scale: 0.46 },
+  ];
+  for (const rm of remoraSpecs) {
+    const rStart = idx.length;
+    const rLen = 14;
+    const rRad = 10;
+    const rRings = [];
+    for (let i = 0; i <= rLen; i++) {
+      const u = i / rLen; // 0 = head (+z), 1 = tail (-z)
+      const rz = rm.oz + (0.55 - u * 1.15) * rm.scale;
+      const rad = Math.sin(Math.pow(u, 0.72) * Math.PI) * 0.085 * rm.scale + 0.008 * rm.scale;
+      const tS = Math.max(0.05, Math.min(0.95, (3.28 - rz) / 5.60));
+      const sw = 0.028 + 0.972 * Math.pow(Math.max(0, (tS - 0.19) / 0.81), 1.70);
+      const ring = [];
+      for (let j = 0; j < rRad; j++) {
+        const a = (j / rRad) * Math.PI * 2;
+        ring.push(pushV(
+          rm.ox + Math.sin(a) * rad * 0.85,
+          rm.oy + Math.cos(a) * rad * 0.68,
+          rz,
+          tS, sw, 0, 0, 0, 3
+        ));
+      }
+      rRings.push(ring);
+    }
+    for (let i = 0; i < rLen; i++) {
+      for (let j = 0; j < rRad; j++) {
+        const nj = (j + 1) % rRad;
+        idx.push(rRings[i][j], rRings[i][nj], rRings[i + 1][nj], rRings[i][j], rRings[i + 1][nj], rRings[i + 1][j]);
+      }
+    }
+    // Remora forked tail fin
+    const tz0 = rm.oz - 0.58 * rm.scale;
+    const tz1 = rm.oz - 0.82 * rm.scale;
+    const tTail = Math.max(0.1, Math.min(0.95, (3.28 - tz1) / 5.60));
+    const swT = 0.028 + 0.972 * Math.pow(Math.max(0, (tTail - 0.19) / 0.81), 1.70);
+    const tc = pushV(rm.ox, rm.oy, tz0, tTail, swT, 0, 0, 0, 3);
+    const tt = pushV(rm.ox, rm.oy + 0.11 * rm.scale, tz1, tTail, swT, 0, 0, 0, 3);
+    const tb = pushV(rm.ox, rm.oy - 0.10 * rm.scale, tz1, tTail, swT, 0, 0, 0, 3);
+    const tn = pushV(rm.ox, rm.oy, tz0 - 0.14 * rm.scale, tTail, swT, 0, 0, 0, 3);
+    idx.push(tc, tt, tn, tc, tn, tb, tc, tn, tt, tc, tb, tn);
+    ensureOutwardWinding(rStart);
+  }
+
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('aSpineCoord', new THREE.Float32BufferAttribute(spineCoord, 2));
-  geo.setAttribute('aPartId', new THREE.Float32BufferAttribute(partId, 1));
+  geo.setAttribute('aMatWeights', new THREE.Float32BufferAttribute(matWeights, 4));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
@@ -419,44 +569,59 @@ function buildAnatomicalSharkGeometry() {
 }
 
 // ============================================================================
-// AAA Shark Materials (Arc-Length Spinal Kinematics + Dermal Denticle Anisotropic
-// Velvet Sheen + Fin-Edge Subsurface Scattering + Multi-Zone Ocular Eye)
+// GTA-6-Grade Apex Shark Materials & Kinematics
+// Arc-Length Carangiform Wave + Breathing Gill Flare & Jaw Gape + Curious Look-At +
+// Mikkelsen Surface-Gradient Bump (Dermal Denticles + Pixel-Sharp 5 Gill Slits +
+// Dynamic Myomere Muscle Ripples + Dual-Lobe Wet GGX + Chromatic Caustics + SSS)
 // ============================================================================
 const SHARK_WAVE_GLSL = `
-  vec3 sharkDeform(vec3 p, vec2 sc, float phase) {
+  vec3 sharkDeform(vec3 p, vec2 sc, float phase, vec2 look) {
     float t = sc.x;
     float w = sc.y;
     // Secondary hydrodynamic phase lag on outer fin tips
-    float tipLag = max(0.0, abs(p.y) - 0.35) * 0.55 + max(0.0, abs(p.x) - 0.45) * 0.35;
+    float tipLag = max(0.0, abs(p.y) - 0.35) * 0.52 + max(0.0, abs(p.x) - 0.45) * 0.34;
     float kPhase = phase - t * 6.4 - tipLag;
     float wave = sin(kPhase);
     float dWaveDt = -6.4 * cos(kPhase);
 
     // Subtle counter-yaw of head/rostrum balancing tail thrust
-    float headCounter = (1.0 - smoothstep(0.0, 0.25, t)) * sin(phase + 0.4) * 0.035;
-    float latOffset = wave * 0.45 * w + headCounter;
+    float headCounter = (1.0 - smoothstep(0.0, 0.25, t)) * sin(phase + 0.4) * 0.032;
+    float latOffset = wave * 0.44 * w + headCounter;
 
     // Arc-length-preserving spinal tangent rotation in XZ plane
-    float yawAng = clamp(dWaveDt * 0.075 * w, -0.52, 0.52);
+    float yawAng = clamp(dWaveDt * 0.072 * w, -0.50, 0.50);
     float cy = cos(yawAng);
     float sy = sin(yawAng);
     float rx = p.x * cy + p.z * sy * 0.08;
     p.x = rx + latOffset;
 
-    // Subtle rhythmic gill-arch breathing expansion at t in [0.20..0.31]
-    float gillBreath = exp(-pow((t - 0.25) / 0.045, 2.0)) * (0.5 + 0.5 * sin(phase * 0.65)) * 0.022;
-    p.x += sign(p.x) * gillBreath * step(0.12, abs(p.x));
+    // Rhythmic branchial gill-arch pumping & subtle lower-jaw breathing gape
+    float breath = 0.5 + 0.5 * sin(phase * 0.58);
+    float gillBreath = exp(-pow((t - 0.25) / 0.048, 2.0)) * breath * 0.028;
+    p.x += sign(p.x) * gillBreath * step(0.14, abs(p.x));
+    if (t > 0.065 && t < 0.16 && p.y < -0.17) {
+      float jawEnv = sin(clamp((t - 0.065) / 0.095, 0.0, 1.0) * 3.14159);
+      p.y -= jawEnv * (0.012 + 0.022 * breath);
+    }
 
-    // Slight torsional body roll & vertical heave on high tail beat
-    p.y += sin(phase * 2.0 - t * 6.4) * 0.022 * w + p.x * wave * 0.06 * w;
+    // Curious diver-aware subtle head glance (anterior head t < 0.28)
+    float headFlex = smoothstep(0.28, 0.02, t);
+    float headArm = headFlex * headFlex;
+    p.x += look.x * headArm * 0.42;
+    p.y += look.y * headArm * 0.26;
+
+    // Slight torsional body roll & vertical heave on strong tail beat
+    p.y += sin(phase * 2.0 - t * 6.4) * 0.020 * w + p.x * wave * 0.055 * w;
     return p;
   }
 `;
 
-function createSharkMaterial(sharedUniforms) {
+function createSharkMaterial(sharedUniforms, sharkUniforms) {
   const vs = /* glsl */ `
     attribute vec2 aSpineCoord;
-    attribute float aPartId;
+    attribute vec4 aMatWeights;
+
+    uniform vec2 uSharkLook;
 
     ${MEDIUM_GLSL}
     ${SHARK_WAVE_GLSL}
@@ -466,17 +631,22 @@ function createSharkMaterial(sharedUniforms) {
     out vec3 vLPos;
     out vec3 vLNorm;
     out vec2 vSpine;
-    out float vPart;
+    out vec4 vMatW;
 
     void main() {
-      vec3 lp = sharkDeform(position, aSpineCoord, uSwimPhase);
+      vec3 lp = sharkDeform(position, aSpineCoord, uSwimPhase, uSharkLook);
       // Finite-difference Jacobian normal rotation along spine
       float t0 = max(0.0, aSpineCoord.x - 0.012);
       float t1 = min(1.08, aSpineCoord.x + 0.012);
-      vec3 d0 = sharkDeform(position, vec2(t0, aSpineCoord.y), uSwimPhase);
-      vec3 d1 = sharkDeform(position, vec2(t1, aSpineCoord.y), uSwimPhase);
+      vec3 d0 = sharkDeform(position, vec2(t0, aSpineCoord.y), uSwimPhase, uSharkLook);
+      vec3 d1 = sharkDeform(position, vec2(t1, aSpineCoord.y), uSwimPhase, uSharkLook);
       float slopeX = (d1.x - d0.x) * 3.6;
-      vec3 ln = normalize(vec3(normal.x - normal.z * slopeX, normal.y, normal.z + normal.x * slopeX));
+      float slopeY = (d1.y - d0.y) * 2.2;
+      vec3 ln = normalize(vec3(
+        normal.x - normal.z * slopeX,
+        normal.y - normal.z * slopeY,
+        normal.z + normal.x * slopeX + normal.y * slopeY
+      ));
 
       vec4 wp = modelMatrix * vec4(lp, 1.0);
       vec3 wn = normalize(mat3(modelMatrix) * ln);
@@ -486,7 +656,7 @@ function createSharkMaterial(sharedUniforms) {
       vLPos = position;
       vLNorm = normal;
       vSpine = aSpineCoord;
-      vPart = aPartId;
+      vMatW = aMatWeights;
       gl_Position = projectionMatrix * viewMatrix * wp;
     }
   `;
@@ -496,96 +666,178 @@ function createSharkMaterial(sharedUniforms) {
     precision highp sampler3D;
 
     ${MEDIUM_GLSL}
+    ${SURFACE_GRADIENT_BUMP_GLSL}
 
     in vec3 vWPos;
     in vec3 vWNorm;
     in vec3 vLPos;
     in vec3 vLNorm;
     in vec2 vSpine;
-    in float vPart;
+    in vec4 vMatW;
 
     layout(location = 0) out vec4 fragColor;
 
     void main() {
       vec3 gn = normalize(vWNorm);
-      // Anisotropic dermal denticle (placoid scale) micro-relief elongated along body axis
-      TP tpMacro = tri(vLPos * vec3(2.4, 2.4, 1.4), gn);
-      TP tpDenticle = tri(vLPos * vec3(16.0, 16.0, 7.5), gn);
-      float denticleRib = sin(vLPos.z * 95.0 + vLPos.y * 28.0 + tpDenticle.h * 2.5) * 0.08;
-      vec3 N = normalize(gn + tpMacro.n * 0.24 + tpDenticle.n * 0.22 + vec3(0.0, denticleRib, denticleRib * 0.5));
+      float finEdgeW = vMatW.x;
+      float gillVertW = vMatW.y;
+      float mouthW = vMatW.z;
+      float hardId = vMatW.w;
 
-      // AAA Pelagic Grey Reef / Great White Shark Countershading Palette
-      vec3 dorsalCol = vec3(0.095, 0.135, 0.175); // Deep gunmetal slate-blue with subtle bronze undertone
-      vec3 bronzeShift = vec3(0.155, 0.148, 0.135);
-      vec3 flankCol = mix(vec3(0.18, 0.23, 0.27), bronzeShift, 0.38);
-      vec3 bellyCol = vec3(0.68, 0.70, 0.69); // Crisp porcelain-white ventral countershading
+      // Disconnected sub-mesh masks (zero interpolation bleed onto skin!)
+      float eyeMask = step(0.5, hardId) * step(hardId, 1.5);
+      float toothMask = step(1.5, hardId) * step(hardId, 2.5);
+      float remoraMask = step(2.5, hardId);
+      float skinOnly = 1.0 - clamp(eyeMask + toothMask + remoraMask, 0.0, 1.0);
 
-      // Jagged, organic dorso-ventral countershading demarcation along the flank
-      float jagged = (tpMacro.h - 0.5) * 0.11 + (tpDenticle.c - 0.5) * 0.045 + sin(vLPos.z * 3.6) * 0.035;
+      // Multi-scale triplanar organic dermis + diamond dermal denticle (placoid scale) micro-texture
+      TP tpMacro = tri(vLPos * vec3(2.2, 2.2, 1.3), gn);
+      TP tpMed = tri(vLPos * vec3(8.5, 8.5, 5.0), gn);
+      TP tpDent = tri(vLPos * vec3(24.0, 24.0, 14.0), gn);
+
+      // Anisotropic diamond placoid micro-scales aligned with hydrodynamic flow
+      float dentDiamond = sin(vLPos.z * 138.0 + vLPos.y * 62.0) * cos(vLPos.z * 138.0 - vLPos.y * 62.0);
+      float dentHeight = dentDiamond * 0.25 + (tpDent.h - 0.5) * 0.55 + (tpMed.h - 0.5) * 0.45;
+
+      // Dynamic myomere muscle flex bands rippling along the flanks with the swimming S-wave
+      float flexWave = sin(uSwimPhase - vSpine.x * 6.4);
+      float flankEnv = smoothstep(0.24, 0.42, vSpine.x) * (1.0 - smoothstep(0.78, 0.93, vSpine.x))
+        * smoothstep(0.35, 0.82, abs(vLNorm.x)) * (1.0 - finEdgeW);
+      float myomere = sin(vLPos.z * 22.0 + abs(vLPos.y) * 9.0) * (0.35 + 0.65 * abs(flexWave)) * flankEnv;
+
+      // Sub-pixel crisp 5-Slit Branchial Gill Clefts (matches sculpted geometry + razor-sharp FS SDF)
+      float gillSlitSDF = 0.0;
+      float gillArchBump = 0.0;
+      if (skinOnly > 0.5 && vSpine.x > 0.188 && vSpine.x < 0.312 && abs(vLNorm.x) > 0.48 && vLPos.y > -0.34 && vLPos.y < 0.28) {
+        float yNorm = (vLPos.y + 0.03) / 0.30;
+        float vEnv = clamp(1.0 - yNorm * yNorm, 0.0, 1.0);
+        float tCurve = vSpine.x - yNorm * 0.0085;
+        float gCoord = ((tCurve - 0.195) / 0.110) * 5.0;
+        if (gCoord >= 0.0 && gCoord < 5.0) {
+          float gFrac = fract(gCoord);
+          float breathFlare = 0.045 + 0.025 * (0.5 + 0.5 * sin(uSwimPhase * 0.58));
+          // Deep recessed dark slit at gFrac ~ 0.72, fleshy overlapping gill flap ahead of it
+          gillSlitSDF = exp(-pow((gFrac - 0.72) / breathFlare, 2.0)) * smoothstep(0.05, 0.28, vEnv);
+          gillArchBump = sin(clamp(gFrac / 0.62, 0.0, 1.0) * 3.14159) * smoothstep(0.05, 0.35, vEnv) - gillSlitSDF * 2.2;
+        }
+      }
+      float gillCleft = clamp(max(gillSlitSDF, gillVertW * 0.65), 0.0, 1.0) * skinOnly;
+
+      // Healed predatory hunt & reef scrape scars across snout, brow, and dorsal shoulder
+      float scar1 = exp(-pow((vLPos.y - 0.21 - (vLPos.z - 1.15) * 0.34) / 0.011, 2.0))
+        * smoothstep(0.55, 1.35, vLPos.z) * (1.0 - smoothstep(1.55, 2.15, vLPos.z));
+      float scar2 = exp(-pow((vLPos.y - 0.13 + (vLPos.z - 1.55) * 0.44) / 0.009, 2.0))
+        * smoothstep(0.95, 1.75, vLPos.z) * (1.0 - smoothstep(1.95, 2.55, vLPos.z));
+      float scar3 = exp(-pow((vLPos.y - 0.32 - (vLPos.z - 0.35) * 0.26) / 0.013, 2.0))
+        * smoothstep(-0.2, 0.4, vLPos.z) * (1.0 - smoothstep(0.55, 0.95, vLPos.z));
+      float scarMask = clamp((scar1 + scar2 + scar3) * smoothstep(0.32, 0.75, tpMed.h), 0.0, 1.0) * skinOnly;
+
+      // Combine analytic surface-gradient micro-relief heightfield
+      float reliefH = (dentHeight * 0.22 + myomere * 0.32 + gillArchBump * 0.75 - scarMask * 0.45) * skinOnly;
+      vec3 N = perturbNormalBump(vWPos, gn, reliefH, 0.018);
+      N = normalize(N + (tpMacro.n * 0.14 + tpDent.n * 0.08) * skinOnly);
+
+      // ---- Rich Photorealistic Great White / Pelagic Shark Countershading ----
+      vec3 dorsalDeep = vec3(0.058, 0.088, 0.122);  // Deep gunmetal pelagic slate-indigo
+      vec3 dorsalBronze = vec3(0.115, 0.118, 0.112); // Subtle warm metallic bronze undertone
+      vec3 flankCol = mix(vec3(0.145, 0.188, 0.225), dorsalBronze, 0.42);
+      vec3 bellyCol = vec3(0.68, 0.70, 0.69);        // Natural warm porcelain-ivory ventral belly
+
+      // Organic dappled irregular countershading border along lower flank & jaw
+      float jagged = (tpMacro.h - 0.5) * 0.13 + (tpMed.c - 0.5) * 0.065 + sin(vLPos.z * 3.4) * 0.04;
       float flankLine = vLPos.y + jagged;
-      float bellyToFlank = smoothstep(-0.14, 0.02, flankLine);
-      float flankToDorsal = smoothstep(0.02, 0.34, flankLine);
-      // Dark boundary line right along the countershading border (classic Carcharhinid / Lamnid trait)
-      float borderPin = exp(-pow((flankLine - 0.01) / 0.045, 2.0)) * 0.22;
-      vec3 skinCol = mix(bellyCol, mix(flankCol, dorsalCol, flankToDorsal), bellyToFlank);
-      skinCol *= (1.0 - borderPin);
+      float bellyToFlank = smoothstep(-0.15, 0.03, flankLine);
+      float flankToDorsal = smoothstep(0.04, 0.38, flankLine);
+      // Characteristic darker smudge/shadow band right along countershading seam
+      float borderShade = exp(-pow((flankLine - 0.02) / 0.055, 2.0)) * 0.18;
+      vec3 skinCol = mix(bellyCol, mix(flankCol, dorsalDeep, flankToDorsal), bellyToFlank);
+      skinCol *= (1.0 - borderShade);
 
-      // Subtle vertical pelagic tiger/reef barring & dappled dermal mottling on upper flanks
-      float barring = sin(vLPos.z * 7.2 + sin(vLPos.y * 5.0) * 1.4) * 0.5 + 0.5;
-      float mottle = smoothstep(0.32, 0.76, tpMacro.c * 0.65 + barring * 0.35);
-      skinCol *= mix(0.86, 1.10, mottle * flankToDorsal + (1.0 - flankToDorsal) * 0.5);
+      // Subtle dappled pelagic dorsal mottling & faint lateral line canal
+      float mottle = smoothstep(0.28, 0.78, tpMacro.c * 0.62 + tpMed.c * 0.38);
+      skinCol *= mix(0.86, 1.12, mottle * flankToDorsal + (1.0 - flankToDorsal) * 0.5);
+      float latLine = exp(-pow((vLPos.y - 0.07 - sin(vLPos.z * 0.8) * 0.03) / 0.012, 2.0)) * flankEnv;
+      skinCol *= (1.0 - latLine * 0.16);
 
-      // Healing predatory bite/reef scrape scars across snout & dorsal flanks
-      float scarLine1 = exp(-pow((vLPos.y - 0.22 - (vLPos.z - 1.1) * 0.35) / 0.012, 2.0)) * smoothstep(0.6, 1.6, vLPos.z) * (1.0 - smoothstep(1.6, 2.2, vLPos.z));
-      float scarLine2 = exp(-pow((vLPos.y - 0.14 + (vLPos.z - 1.4) * 0.42) / 0.010, 2.0)) * smoothstep(0.8, 1.8, vLPos.z) * (1.0 - smoothstep(1.8, 2.4, vLPos.z));
-      float scarMask = clamp((scarLine1 + scarLine2) * smoothstep(0.55, 0.85, tpDenticle.h), 0.0, 1.0);
-      skinCol = mix(skinCol, vec3(0.48, 0.52, 0.55), scarMask * 0.65);
+      // True Pelagic / Great White Fin Pigmentation:
+      // 1) Pectoral & Pelvic Fins: Deep gunmetal dorsal upper face (vLNorm.y > 0), pale porcelain underside with dark tip blotch!
+      float isLateralFin = smoothstep(0.36, 0.58, abs(vLPos.x)) * (1.0 - smoothstep(0.76, 0.88, vSpine.x)) * skinOnly;
+      float pecTopMask = isLateralFin * smoothstep(-0.12, 0.14, vLNorm.y);
+      float pecBotMask = isLateralFin * smoothstep(0.08, -0.18, vLNorm.y);
+      vec3 pecDorsalCol = mix(flankCol, dorsalDeep, 0.65) * mix(0.90, 1.08, mottle);
+      skinCol = mix(skinCol, pecDorsalCol, pecTopMask);
+      // Classic Great White underside: pale belly white transitioning to charcoal-black ventral wingtip
+      float pecTipDark = smoothstep(1.08, 1.58, abs(vLPos.x));
+      vec3 pecVentralCol = mix(vec3(0.60, 0.63, 0.63), vec3(0.032, 0.042, 0.055), pecTipDark * 0.92);
+      skinCol = mix(skinCol, pecVentralCol, pecBotMask);
 
-      // Characteristic dusky/black trailing fin edges & tips (Carcharhinus amblyrhynchos signature!)
-      float finTip = smoothstep(0.75, 1.48, abs(vLPos.x)) + smoothstep(0.52, 1.22, abs(vLPos.y));
-      float trailingEdge = smoothstep(4.2, 4.9, vPart);
-      float blackTipMask = clamp(finTip * 0.68 + trailingEdge * 0.45, 0.0, 0.88);
-      skinCol = mix(skinCol, vec3(0.025, 0.032, 0.042), blackTipMask);
+      // 2) Caudal Tail Fin (BOTH upper & lower lunate lobes + anal fin): Gunmetal slate-grey, never stark white!
+      float isTailFin = smoothstep(0.84, 0.92, vSpine.x) * skinOnly;
+      float tailSpan = smoothstep(0.18, 0.92, abs(vLPos.y));
+      vec3 tailCol = mix(flankCol, dorsalDeep, 0.52 + 0.32 * tailSpan) * mix(0.88, 1.10, mottle);
+      skinCol = mix(skinCol, tailCol, isTailFin);
 
-      // Ampullae of Lorenzini sensory pore speckles under snout
-      if (vLPos.z > 2.35 && vLPos.y < 0.05) {
-        float pore = smoothstep(0.78, 0.86, tpDenticle.c);
-        skinCol = mix(skinCol, vec3(0.18, 0.19, 0.21), pore * 0.55);
+      // 3) Authentic dusky charcoal-black fin tips & thin trailing margins across all fins
+      float finDist = smoothstep(0.92, 1.68, abs(vLPos.x)) + smoothstep(0.68, 1.36, abs(vLPos.y));
+      float darkFinMask = clamp(finEdgeW * 0.48 + finDist * 0.36, 0.0, 0.80) * skinOnly;
+      skinCol = mix(skinCol, vec3(0.028, 0.036, 0.046), darkFinMask);
+
+      // Healed pale silver-grey hunting scars
+      skinCol = mix(skinCol, vec3(0.44, 0.48, 0.51), scarMask * 0.62);
+
+      // Ampullae of Lorenzini dark electroreceptor sensory pores across snout underside
+      if (skinOnly > 0.5 && vLPos.z > 2.35 && vLPos.y < 0.08) {
+        float poreGrid = smoothstep(0.74, 0.85, tpDent.c);
+        float snoutEnv = smoothstep(2.35, 2.75, vLPos.z) * smoothstep(0.08, -0.08, vLPos.y);
+        skinCol = mix(skinCol, vec3(0.11, 0.13, 0.15), poreGrid * snoutEnv * 0.70);
       }
 
-      float roughness = mix(0.36, 0.26, bellyToFlank);
-      float specStr = 0.38;
+      // Deep dark crimson-burgundy branchial gill cleft interior & AO around overlapping gill rims
+      vec3 gillInterior = vec3(0.065, 0.018, 0.024);
+      skinCol = mix(skinCol, gillInterior, gillCleft * 0.94);
 
-      // Branchial gill slits & outer labial creases (partId ~ 2)
-      float gillMask = smoothstep(1.5, 1.9, vPart) * (1.0 - smoothstep(2.4, 2.8, vPart));
-      skinCol = mix(skinCol, vec3(0.045, 0.022, 0.028), gillMask * 0.90);
-      specStr *= (1.0 - gillMask * 0.75);
+      // Oral cavity & fleshy crimson-pink gingiva inside parabolic jaws
+      float gumMask = smoothstep(0.25, 0.85, mouthW) * skinOnly;
+      skinCol = mix(skinCol, vec3(0.32, 0.075, 0.095), gumMask * 0.92);
 
-      // Crimson-pink oral gingiva / gum tissue inside jaw (partId ~ 4)
-      float gumMask = smoothstep(3.5, 3.9, vPart) * (1.0 - smoothstep(4.2, 4.6, vPart));
-      skinCol = mix(skinCol, vec3(0.36, 0.09, 0.11), gumMask * 0.92);
+      // Default dermal roughness & wet coat strength
+      float roughness = mix(0.32, 0.22, bellyToFlank);
+      float specStr = 0.48;
+      specStr *= (1.0 - gillCleft * 0.85) * (1.0 - gumMask * 0.4);
 
-      // Razor-sharp white enamel teeth (partId ~ 3)
-      float toothMask = smoothstep(2.5, 2.9, vPart) * (1.0 - smoothstep(3.2, 3.6, vPart));
-      skinCol = mix(skinCol, vec3(0.86, 0.85, 0.80), toothMask);
-      roughness = mix(roughness, 0.12, toothMask);
-      specStr = mix(specStr, 0.85, toothMask);
+      // Symbiotic Remora Suckerfish coloration (dark slate-brown with pale silver lateral stripe)
+      if (remoraMask > 0.5) {
+        float rStripe = smoothstep(0.015, 0.045, abs(vLNorm.y));
+        skinCol = mix(vec3(0.38, 0.42, 0.45), vec3(0.09, 0.11, 0.13), rStripe);
+        roughness = 0.26;
+        specStr = 0.55;
+      }
 
-      // Multi-zone anatomical shark eye: dark scleral rim + bronze-slate iris + obsidian pupil (partId ~ 1)
-      float eyeMask = 1.0 - smoothstep(0.0, 0.4, abs(vPart - 1.0));
-      if (eyeMask > 0.01) {
-        vec2 eyeRel = vec2((vLPos.z - 2.72) / 0.062, (vLPos.y - 0.068) / 0.058);
+      // Razor-sharp serrated white enamel Great White teeth (disconnected hardId = 2)
+      if (toothMask > 0.5) {
+        skinCol = mix(vec3(0.76, 0.72, 0.65), vec3(0.92, 0.90, 0.85), smoothstep(-0.24, -0.19, vLPos.y));
+        roughness = 0.10;
+        specStr = 1.05;
+      }
+
+      // Glossy Obsidian Apex Shark Eye with subtle steel-blue/amber iris ring & wet cornea catchlight (hardId = 1)
+      if (eyeMask > 0.5) {
+        vec2 eyeRel = vec2((vLPos.z - 2.75) / 0.064, (vLPos.y - 0.072) / 0.060);
         float eyeR = length(eyeRel);
-        float pupil = 1.0 - smoothstep(0.32, 0.46, eyeR);
-        float iris = (1.0 - pupil) * (1.0 - smoothstep(0.72, 0.92, eyeR));
-        vec3 irisCol = vec3(0.22, 0.20, 0.14) * (0.75 + 0.5 * tpDenticle.h);
-        vec3 eyeCol = mix(vec3(0.02, 0.025, 0.03), irisCol, iris);
-        eyeCol = mix(eyeCol, vec3(0.005, 0.007, 0.01), pupil);
-        skinCol = mix(skinCol, eyeCol, eyeMask);
-        roughness = mix(roughness, 0.05, eyeMask);
-        specStr = mix(specStr, 1.35, eyeMask);
+        float pupil = 1.0 - smoothstep(0.42, 0.58, eyeR);
+        float iris = (1.0 - pupil) * (1.0 - smoothstep(0.78, 0.95, eyeR));
+        vec3 irisCol = vec3(0.14, 0.18, 0.20) * (0.75 + 0.5 * tpDent.h);
+        skinCol = mix(vec3(0.015, 0.020, 0.025), irisCol, iris);
+        skinCol = mix(skinCol, vec3(0.004, 0.005, 0.008), pupil);
+        roughness = 0.04;
+        specStr = 1.65;
       }
 
+      // Subtle micro-cavity AO inside gill arches, eye brow socket, and oral recess
+      float browAO = 1.0 - 0.28 * exp(-pow((vLPos.z - 2.75) / 0.13, 2.0) - pow((vLPos.y - 0.07) / 0.11, 2.0)) * skinOnly;
+      skinCol *= browAO * (1.0 - 0.24 * gillCleft);
+
+      // ---- Dual-Lobe Underwater PBR Lighting + Chromatic Caustics + Backlit Fin SSS ----
       vec3 V = normalize(uCamPos - vWPos);
       vec3 L = uSunDir;
       vec3 H = normalize(V + L);
@@ -595,58 +847,61 @@ function createSharkMaterial(sharedUniforms) {
 
       float sh = shadow9(vWPos);
       vec3 caRaw = causRGB(vWPos);
-      vec3 ca = caRaw / (1.0 + caRaw * 0.45);
+      vec3 ca = caRaw / (1.0 + caRaw * 0.42);
       vec3 sunIrr = sunE(vWPos);
 
-      // 1. Direct Sun + Chromatic Caustics + Wrap Diffuse
-      float wrapDiff = max(0.0, (dot(N, L) + 0.18) / 1.18);
-      vec3 direct = sunIrr * wrapDiff * sh * (0.52 + 1.28 * ca);
+      // 1. Wrap Diffuse + Sharp Chromatic Underwater Caustics
+      float wrapDiff = max(0.0, (dot(N, L) + 0.16) / 1.16);
+      vec3 direct = sunIrr * wrapDiff * sh * (0.56 + 1.38 * ca);
 
-      // 2. Upward Sandy Reef Bounce Light on Porcelain-White Ventral Belly
-      vec3 bellyBounce = vec3(0.20, 0.24, 0.22) * max(-N.y, 0.0) * (1.2 - bellyToFlank * 0.55);
+      // 2. Warm Sandy-Reef Upward Bounce Light illuminating the White Belly
+      vec3 bellyBounce = vec3(0.24, 0.28, 0.26) * max(-N.y, 0.0) * (1.25 - bellyToFlank * 0.58);
       vec3 ambient = amb(vWPos, N) + sideLight(vWPos, N) + bellyBounce;
 
-      // 3. Dual-Lobe Specular: Anisotropic Dermal Denticle Velvet Sheen + Wet Mucous Coat GGX
+      // 3. Dual-Lobe GGX: Satin Metallic Dermal Denticles + Mirror-Wet Seawater Clearcoat
       float alphaSq = pow(roughness, 4.0);
       float denom = ndh * ndh * (alphaSq - 1.0) + 1.0;
       float D_ggx = alphaSq / max(3.14159 * denom * denom, 1e-4);
-      float fresnel = 0.028 + 0.972 * pow(1.0 - max(dot(H, V), 0.0), 5.0);
+      float fresnel = 0.03 + 0.97 * pow(1.0 - max(dot(H, V), 0.0), 5.0);
       float wetSpec = D_ggx * fresnel * specStr * sh;
-      float denticleSheen = pow(1.0 - ndv, 3.4) * (0.35 + 0.65 * ndl) * 0.18 * (1.0 - eyeMask);
+      // Tight clearcoat film glint + velvet anisotropic denticle rim sheen
+      float coatGlint = pow(ndh, 96.0) * 0.34 * sh * (1.0 - gillCleft);
+      float denticleSheen = pow(1.0 - ndv, 3.2) * (0.30 + 0.70 * ndl) * 0.22 * (1.0 - eyeMask) * (1.0 - gillCleft);
 
-      // 4. Translucent Fin-Edge Subsurface Scattering (SSS) when Backlit
-      float finThin = clamp(trailingEdge * 0.85 + finTip * 0.55, 0.0, 1.0);
-      float backLight = pow(clamp(dot(-V, L + N * 0.45), 0.0, 1.0), 2.8);
-      vec3 sssCol = vec3(0.32, 0.52, 0.48) * sunIrr * backLight * finThin * (0.45 + 0.55 * sh) * 0.55;
+      // 4. Translucent Thin Fin-Edge Subsurface Scattering (SSS) when Backlit
+      float finThin = clamp(finEdgeW * 0.90 + finDist * 0.35, 0.0, 1.0) * skinOnly;
+      float backLight = pow(clamp(dot(-V, L + N * 0.42), 0.0, 1.0), 2.6);
+      vec3 sssCol = vec3(0.30, 0.54, 0.50) * sunIrr * backLight * finThin * (0.45 + 0.55 * sh) * 0.58;
 
       vec3 lit = skinCol * (direct + ambient)
-        + sunIrr * (0.35 + ca * 0.95) * wetSpec
-        + mix(WCOL, sunIrr, 0.5) * denticleSheen
+        + sunIrr * (0.38 + ca * 1.05) * (wetSpec + coatGlint)
+        + mix(WCOL, sunIrr, 0.52) * denticleSheen
         + sssCol;
       fragColor = vec4(fog(lit, vWPos), 1.0);
     }
   `;
 
-  return bindSharedUniforms(
-    new THREE.ShaderMaterial({
-      uniforms: sharedUniforms,
-      vertexShader: vs,
-      fragmentShader: fs,
-      glslVersion: THREE.GLSL3,
-      side: THREE.FrontSide,
-    }),
-    sharedUniforms
-  );
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { ...sharedUniforms, ...sharkUniforms },
+    vertexShader: vs,
+    fragmentShader: fs,
+    glslVersion: THREE.GLSL3,
+    side: THREE.FrontSide,
+  });
+  bindSharedUniforms(mat, sharedUniforms);
+  mat.uniforms.uSharkLook = sharkUniforms.uSharkLook;
+  return mat;
 }
 
-function createSharkShadowMaterial(sharedUniforms) {
+function createSharkShadowMaterial(sharedUniforms, sharkUniforms) {
   const vs = /* glsl */ `
     attribute vec2 aSpineCoord;
     uniform float uSwimPhase;
+    uniform vec2 uSharkLook;
     ${SHARK_WAVE_GLSL}
 
     void main() {
-      vec3 lp = sharkDeform(position, aSpineCoord, uSwimPhase);
+      vec3 lp = sharkDeform(position, aSpineCoord, uSwimPhase, uSharkLook);
       vec4 wp = modelMatrix * vec4(lp, 1.0);
       gl_Position = projectionMatrix * viewMatrix * wp;
     }
@@ -660,29 +915,30 @@ function createSharkShadowMaterial(sharedUniforms) {
     }
   `;
 
-  return bindSharedUniforms(
-    new THREE.ShaderMaterial({
-      uniforms: sharedUniforms,
-      vertexShader: vs,
-      fragmentShader: fs,
-      glslVersion: THREE.GLSL3,
-      side: THREE.DoubleSide,
-      colorWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: 1.5,
-      polygonOffsetUnits: 1.5,
-    }),
-    sharedUniforms
-  );
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { ...sharedUniforms, ...sharkUniforms },
+    vertexShader: vs,
+    fragmentShader: fs,
+    glslVersion: THREE.GLSL3,
+    side: THREE.DoubleSide,
+    colorWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: 1.5,
+    polygonOffsetUnits: 1.5,
+  });
+  bindSharedUniforms(mat, sharedUniforms);
+  mat.uniforms.uSharkLook = sharkUniforms.uSharkLook;
+  return mat;
 }
 
 // ============================================================================
-// Zero-Allocation Shark Spline Patrol Controller
+// Zero-Allocation Shark Spline Patrol Controller (with Curious Diver Look-At)
 // ============================================================================
 export class SharkController {
-  constructor(sharkMesh, sharkShadowMesh, terrain, sharedUniforms) {
+  constructor(sharkMesh, sharkShadowMesh, sharkUniforms, terrain, sharedUniforms) {
     this.mesh = sharkMesh;
     this.shadowMesh = sharkShadowMesh;
+    this.sharkUniforms = sharkUniforms;
     this.terrain = terrain;
     this.sharedUniforms = sharedUniforms;
 
@@ -716,14 +972,14 @@ export class SharkController {
     this.colGrad = new THREE.Vector3();
     this.bankSmooth = 0;
 
-    this.mesh.scale.setScalar(1.35);
-    this.shadowMesh.scale.setScalar(1.35);
+    this.mesh.scale.setScalar(1.38);
+    this.shadowMesh.scale.setScalar(1.38);
     this.mesh.position.copy(this.pos);
     this.shadowMesh.position.copy(this.pos);
     this.update(0.016);
   }
 
-  update(dt) {
+  update(dt, camPos = null) {
     const safeDt = Math.min(dt, 0.05);
     this.u = (this.u + safeDt * this.speed) % 1.0;
     const lookAhead = (this.u + 0.008) % 1.0;
@@ -771,6 +1027,31 @@ export class SharkController {
 
     this.shadowMesh.quaternion.copy(this.mesh.quaternion);
     this.shadowMesh.position.copy(this.pos);
+
+    // Curious diver-aware subtle head glance when gliding within 22m
+    let lookX = 0.0;
+    let lookY = 0.0;
+    if (camPos) {
+      const dx = camPos.x - this.pos.x;
+      const dy = camPos.y - this.pos.y;
+      const dz = camPos.z - this.pos.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist > 1.2 && dist < 22.0) {
+        const invD = 1.0 / dist;
+        const nx = dx * invD, ny = dy * invD, nz = dz * invD;
+        const fwdDot = nx * this.fwd.x + ny * this.fwd.y + nz * this.fwd.z;
+        if (fwdDot > -0.3) {
+          const prox = Math.max(0.0, Math.min(1.0, (22.0 - dist) / 14.0));
+          const rightDot = nx * this.right.x + ny * this.right.y + nz * this.right.z;
+          const upDot = nx * this.up.x + ny * this.up.y + nz * this.up.z;
+          lookX = Math.max(-0.24, Math.min(0.24, rightDot * 0.34)) * prox;
+          lookY = Math.max(-0.15, Math.min(0.15, upDot * 0.22)) * prox;
+        }
+      }
+    }
+    const lookAlpha = 1.0 - Math.exp(-safeDt * 3.0);
+    this.sharkUniforms.uSharkLook.value.x += (lookX - this.sharkUniforms.uSharkLook.value.x) * lookAlpha;
+    this.sharkUniforms.uSharkLook.value.y += (lookY - this.sharkUniforms.uSharkLook.value.y) * lookAlpha;
 
     // Sync carangiform tail beat speed to swimming effort
     this.sharedUniforms.uSwimPhase.value += safeDt * (4.6 + Math.abs(this.bankSmooth) * 2.2);
@@ -950,62 +1231,90 @@ function buildFishGeometry() {
 }
 
 // ============================================================================
-// AAA-Grade 1:1 Colossal Mother & Calf Sperm Whales (Physeter macrocephalus — 抹香鯨母子)
-// High-Res Sculpted Spermaceti Case & Junk + Asymmetric Left S-Blowhole +
-// Deep Prune-Like Longitudinal Skin Corrugations + 12 Ventral Throat Grooves +
-// Crenulated Dorsal Hump & 6 Knuckles + Articulated Narrow Lower Mandible with
-// Alveolar Gum Sockets & 22 Pairs of Curved Conical Ivory Teeth +
-// Hydroelastic Scalloped Flukes with Battle Nicks + Giant Squid Sucker-Ring Scars
+// GTA-6-Grade 1:1 Colossal Mother & Calf Sperm Whales (Physeter macrocephalus — 抹香鯨母子)
+// High-Res Organic Sculpt (144x68) + Rounded Spermaceti Case & Junk + Left S-Blowhole +
+// Deep Prune-Skin Longitudinal Corrugations + 14 Ventral Throat Pleats +
+// Dorsal Hump & 7 Knuckles + Smoothly Blended Underslung Lower Mandible with
+// 24 Pairs of Curved Conical Ivory Teeth + 3D Encrusting Volcano Barnacle Clusters +
+// Watertight Auto-Outward-Wound Flippers & Flukes (Zero Shared-Vertex Material Bleed!)
 // ============================================================================
 function buildSpermWhaleGeometry() {
   const pos = [];
   const spineCoord = []; // vec2(tAlongSpine [0..1], waveAmpWeight [0..1])
-  const partId = []; // 0 = cetacean hide, 1 = eye/iris, 2 = lower jaw / ivory lip, 3 = conical ivory teeth, 4 = palatal/alveolar gum, 5 = thin fluke/flipper edge
+  // Continuous weights: x = finEdgeThin, y = lipIvory, z = mouthCavity, w = hardId (disconnected: 0=hide, 1=eye, 2=teeth, 3=barnacles)
+  const matWeights = [];
   const idx = [];
 
-  function pushWV(x, y, z, t, sw, part = 0) {
+  function pushWV(x, y, z, t, sw, finEdge = 0, lipIvory = 0, mouthCav = 0, hardId = 0) {
     const id = pos.length / 3;
     pos.push(x, y, z);
     spineCoord.push(t, sw);
-    partId.push(part);
+    matWeights.push(finEdge, lipIvory, mouthCav, hardId);
     return id;
   }
 
-  // Base length 10.0m along Z (+5.05 squared spermaceti prow -> -4.75 peduncle tail root)
+  function ensureWhaleOutward(startIdx) {
+    let vol6 = 0;
+    let cx = 0, cy = 0, cz = 0, cnt = 0;
+    for (let k = startIdx; k < idx.length; k += 3) {
+      const i0 = idx[k] * 3, i1 = idx[k + 1] * 3, i2 = idx[k + 2] * 3;
+      cx += pos[i0] + pos[i1] + pos[i2];
+      cy += pos[i0 + 1] + pos[i1 + 1] + pos[i2 + 1];
+      cz += pos[i0 + 2] + pos[i1 + 2] + pos[i2 + 2];
+      cnt += 3;
+    }
+    if (!cnt) return;
+    cx /= cnt; cy /= cnt; cz /= cnt;
+    for (let k = startIdx; k < idx.length; k += 3) {
+      const i0 = idx[k] * 3, i1 = idx[k + 1] * 3, i2 = idx[k + 2] * 3;
+      const ax = pos[i0] - cx, ay = pos[i0 + 1] - cy, az = pos[i0 + 2] - cz;
+      const bx = pos[i1] - cx, by = pos[i1 + 1] - cy, bz = pos[i1 + 2] - cz;
+      const dx = pos[i2] - cx, dy = pos[i2 + 1] - cy, dz = pos[i2 + 2] - cz;
+      vol6 += ax * (by * dz - bz * dy) + ay * (bz * dx - bx * dz) + az * (bx * dy - by * dx);
+    }
+    if (vol6 < 0) {
+      for (let k = startIdx; k < idx.length; k += 3) {
+        const tmp = idx[k + 1];
+        idx[k + 1] = idx[k + 2];
+        idx[k + 2] = tmp;
+      }
+    }
+  }
+
+  // Base length 10.0m along Z (+5.06 organic spermaceti prow -> -4.76 peduncle tail root)
   // Scaled by 2.65x for Mother (26.5m) and 1.32x for Calf (13.2m)
-  const nLen = 112;
-  const nRad = 56;
+  const nLen = 144;
+  const nRad = 68;
   const rings = [];
 
   function whaleEnvelope(t) {
-    // Spermaceti massive squared head (t: 0..0.35), barrel ribcage torso (0.35..0.58), muscular laterally compressed tail stock (0.58..1.0)
-    if (t < 0.032) {
-      const u = t / 0.032;
-      const blunt = Math.pow(Math.max(0.015, u), 0.31);
-      return { rx: 0.54 * blunt, ry: 0.96 * blunt, cy: 0.16 * blunt, boxPow: 3.45 };
+    // Organic rounded-blunt spermaceti head (t: 0..0.35), barrel ribcage torso (0.35..0.58), laterally compressed muscular tail stock (0.58..1.0)
+    if (t < 0.042) {
+      const u = t / 0.042;
+      const blunt = Math.pow(Math.max(0.012, u), 0.36);
+      return { rx: 0.52 * blunt, ry: 0.94 * blunt, cy: 0.16 * blunt, boxPow: 2.90 };
     } else if (t < 0.35) {
-      const u = (t - 0.032) / 0.318;
-      const rx = 0.54 + Math.sin(u * Math.PI * 0.5) * 0.44;
-      const ry = 0.96 + Math.sin(u * Math.PI * 0.5) * 0.14;
-      const boxPow = 3.45 - u * 1.15; // transitions from box-like spermaceti organ to rounded thorax
+      const u = (t - 0.042) / 0.308;
+      const rx = 0.52 + Math.sin(u * Math.PI * 0.5) * 0.46;
+      const ry = 0.94 + Math.sin(u * Math.PI * 0.5) * 0.17;
+      const boxPow = 2.90 - u * 0.82; // Organic slab-sided forehead -> rounded barrel chest (no shoebox corners!)
       return { rx, ry, cy: 0.16 - u * 0.10, boxPow };
     } else if (t < 0.58) {
       const u = (t - 0.35) / 0.23;
       const rx = 0.98 - u * 0.20;
-      const ry = 1.10 - u * 0.16;
-      return { rx, ry, cy: 0.06 - u * 0.04, boxPow: 2.30 - u * 0.30 };
+      const ry = 1.11 - u * 0.16;
+      return { rx, ry, cy: 0.06 - u * 0.04, boxPow: 2.08 - u * 0.10 };
     } else {
       const u = Math.min(1.0, Math.max(0.0, (t - 0.58) / 0.42));
-      // Caudal peduncle becomes tall and laterally compressed (keel-like) tapering into fluke keel
-      const rx = Math.max(0.048, 0.78 * Math.pow(Math.max(0.0, 1.0 - u), 1.48) + 0.042);
-      const ry = Math.max(0.078, 0.94 * Math.pow(Math.max(0.0, 1.0 - u), 1.22) + 0.068);
+      const rx = Math.max(0.046, 0.78 * Math.pow(Math.max(0.0, 1.0 - u), 1.48) + 0.040);
+      const ry = Math.max(0.076, 0.95 * Math.pow(Math.max(0.0, 1.0 - u), 1.22) + 0.066);
       return { rx, ry, cy: 0.02 * (1.0 - u), boxPow: 1.95 };
     }
   }
 
   for (let i = 0; i <= nLen; i++) {
     const t = i / nLen;
-    const z = 5.05 - t * 9.80; // +5.05 nose -> -4.75 peduncle fluke root
+    const z = 5.06 - t * 9.82;
     const env = whaleEnvelope(t);
 
     // Authentic cetacean dorso-ventral vertical swimming wave envelope
@@ -1018,89 +1327,102 @@ function buildSpermWhaleGeometry() {
       const ca = Math.cos(a);
       const absSa = Math.abs(sa);
 
-      // Superellipse shape for tall slab-sided spermaceti forehead vs rounded torso
+      // Organic superellipse cross-section
       const absPow = Math.max(1e-5, Math.pow(absSa, env.boxPow) + Math.pow(Math.abs(ca), env.boxPow));
       const lp = Math.pow(absPow, -1.0 / env.boxPow);
       let x = sa * lp * env.rx;
       let y = env.cy + ca * lp * env.ry;
 
-      // Distinctive spermaceti "junk" & overhanging battering-ram prow profile (t < 0.28)
+      // Subtle lateral narrowing toward the ventral jaw side of the spermaceti head (real Physeter wedge!)
+      if (t < 0.34 && ca < 0.0) {
+        const ventTaper = (1.0 - t / 0.34) * (-ca) * 0.24;
+        x *= (1.0 - ventTaper);
+      }
+
+      // Distinctive spermaceti "junk" & upper "case" organic longitudinal crease (t < 0.28)
       if (t < 0.28 && ca > -0.35 && ca < 0.55) {
-        const junkGroove = Math.exp(-Math.pow((ca - 0.12) / 0.16, 2.0)) * (1.0 - t / 0.28) * 0.032;
+        const junkGroove = Math.exp(-Math.pow((ca - 0.12) / 0.17, 2.0)) * (1.0 - t / 0.28) * 0.036;
         x -= Math.sign(sa) * junkGroove;
       }
 
-      // Spermaceti asymmetric left-anterior S-shaped blowhole mound & slit (~ x=-0.17, y~0.92, z=4.50)
-      if (t > 0.018 && t < 0.105 && ca > 0.62) {
-        const dzBlow = (z - 4.50) / 0.25;
-        const sCurve = Math.sin(dzBlow * 2.2) * 0.045;
-        const dxBlow = (x + 0.17 + sCurve) / 0.16;
+      // Asymmetric left-anterior S-shaped blowhole mound & sphincter slit (~ x=-0.17, y~0.94, z=4.50)
+      if (t > 0.016 && t < 0.110 && ca > 0.60) {
+        const dzBlow = (z - 4.50) / 0.24;
+        const sCurve = Math.sin(dzBlow * 2.2) * 0.048;
+        const dxBlow = (x + 0.17 + sCurve) / 0.15;
         const blowR2 = dzBlow * dzBlow + dxBlow * dxBlow;
-        if (blowR2 < 2.4) {
-          const mound = Math.exp(-blowR2 * 2.0) * 0.095;
-          const slit = Math.exp(-dxBlow * dxBlow * 18.0 - dzBlow * dzBlow * 2.5) * 0.052;
+        if (blowR2 < 2.5) {
+          const mound = Math.exp(-blowR2 * 2.1) * 0.105;
+          const slit = Math.exp(-dxBlow * dxBlow * 20.0 - dzBlow * dzBlow * 2.6) * 0.064;
           y += mound - slit;
         }
       }
 
-      // Sculpted supra-ocular temporal bulge & recessed eye socket at (x=±0.88, y=-0.30, z=2.04, t~0.305)
-      if (t > 0.27 && t < 0.345 && absSa > 0.72 && ca < -0.10 && ca > -0.58) {
-        const dtE = (t - 0.307) / 0.025;
+      // Sculpted supra-ocular temporal bulge & recessed dark orbital eye socket (x=±0.87, y=-0.30, z=2.04, t~0.307)
+      if (t > 0.268 && t < 0.348 && absSa > 0.70 && ca < -0.08 && ca > -0.58) {
+        const dtE = (t - 0.307) / 0.026;
         const daE = (ca + 0.32) / 0.16;
         const rE2 = dtE * dtE + daE * daE;
-        if (rE2 < 1.6) {
-          const socket = -Math.exp(-rE2 * 2.6) * 0.048 + Math.exp(-rE2 * 1.1) * 0.025;
+        if (rE2 < 1.8) {
+          const socket = -Math.exp(-rE2 * 2.8) * 0.056 + Math.exp(-rE2 * 1.15) * 0.030;
           x += Math.sign(sa) * socket;
         }
       }
 
-      // 12 deep longitudinal ventral throat grooves along t in [0.15..0.39]
-      if (t > 0.15 && t < 0.39 && ca < -0.18) {
-        const tEnv = Math.sin(((t - 0.15) / 0.24) * Math.PI);
-        const aEnv = Math.min(1.0, Math.max(0.0, (-ca - 0.18) / 0.56));
-        const groove = Math.sin(sa * Math.PI * 12.0) * 0.024 * tEnv * aEnv;
+      // 14 deep longitudinal ventral throat pleats along t in [0.15..0.40]
+      if (t > 0.15 && t < 0.40 && ca < -0.16) {
+        const tEnv = Math.sin(((t - 0.15) / 0.25) * Math.PI);
+        const aEnv = Math.min(1.0, Math.max(0.0, (-ca - 0.16) / 0.56));
+        const groove = Math.sin(sa * Math.PI * 14.0) * 0.028 * tEnv * aEnv;
         y -= Math.abs(groove);
       }
 
-      // Authentic "Prune-Like" Corrugated Longitudinal Skin Folds along Posterior 2/3 of Body (t in [0.33..0.88])
-      if (t > 0.33 && t < 0.88 && ca > -0.55) {
-        const foldEnv = Math.sin(((t - 0.33) / 0.55) * Math.PI);
-        const w1 = Math.sin(a * 18.0 + Math.sin(t * 28.0) * 1.6) * 0.022;
-        const w2 = Math.cos(a * 31.0 - t * 42.0) * 0.012;
-        const w3 = Math.sin(t * 105.0 + a * 6.0) * 0.011;
-        const corr = (w1 + w2 + w3) * foldEnv;
+      // Organic "Prune-Skin" Corrugated Longitudinal Skin Folds along Posterior Flanks (faded cleanly over fleshy dorsal hump!)
+      if (t > 0.32 && t < 0.89 && ca > -0.58) {
+        const foldEnv = Math.sin(((t - 0.32) / 0.57) * Math.PI);
+        const humpClear = 1.0 - Math.exp(-Math.pow((t - 0.605) / 0.065, 2.0)) * Math.max(0.0, (ca - 0.55) / 0.45);
+        const w1 = Math.sin(a * 16.0 + Math.sin(t * 22.0 + a * 2.0) * 2.2) * 0.012;
+        const w2 = Math.cos(a * 27.0 - t * 34.0 + Math.sin(a * 5.0)) * 0.007;
+        const w3 = Math.sin(t * 78.0 + a * 5.0) * 0.006;
+        const corr = (w1 + w2 + w3) * foldEnv * humpClear;
         x += sa * corr;
         y += ca * corr;
       }
 
-      // Signature Crenulated Dorsal Hump (~t=0.61) + 6 Smooth Rounded Dorsal Knuckles + Peduncle Keel
-      if (ca > 0.80) {
-        const ridgeW = Math.pow(Math.max(0.0, (ca - 0.80) / 0.20), 1.45);
-        const hump = Math.exp(-Math.pow((t - 0.605) / 0.048, 2.0)) * 0.34;
-        const knk = t > 0.65 && t < 0.89
-          ? Math.pow(Math.max(0, Math.sin(((t - 0.65) / 0.24) * Math.PI * 6.0)), 1.6) * 0.056 * Math.sin(((t - 0.65) / 0.24) * Math.PI)
+      // Signature Crenulated Dorsal Hump (~t=0.605) + 7 Smooth Rounded Dorsal Knuckles + Peduncle Keel
+      if (ca > 0.78) {
+        const ridgeW = Math.pow(Math.max(0.0, (ca - 0.78) / 0.22), 1.42);
+        const hump = Math.exp(-Math.pow((t - 0.605) / 0.048, 2.0)) * 0.36;
+        const knk = t > 0.65 && t < 0.90
+          ? Math.pow(Math.max(0, Math.sin(((t - 0.65) / 0.25) * Math.PI * 7.0)), 1.55) * 0.062 * Math.sin(((t - 0.65) / 0.25) * Math.PI)
           : 0.0;
-        const keel = t > 0.86 ? Math.sin(((t - 0.86) / 0.14) * Math.PI) * 0.055 : 0.0;
+        const keel = t > 0.86 ? Math.sin(((t - 0.86) / 0.14) * Math.PI) * 0.058 : 0.0;
         y += (hump + knk + keel) * ridgeW;
       }
 
       // Ventral post-anal keel along caudal peduncle (t in [0.68..0.95])
-      if (ca < -0.82 && t > 0.68 && t < 0.95) {
-        const vKeelW = Math.pow(Math.max(0.0, (-ca - 0.82) / 0.18), 1.5);
-        const vKeel = Math.sin(((t - 0.68) / 0.27) * Math.PI) * 0.12;
+      if (ca < -0.80 && t > 0.68 && t < 0.95) {
+        const vKeelW = Math.pow(Math.max(0.0, (-ca - 0.80) / 0.20), 1.5);
+        const vKeel = Math.sin(((t - 0.68) / 0.27) * Math.PI) * 0.13;
         y -= vKeel * vKeelW;
       }
 
-      // Deeply recessed palatal vault beneath spermaceti rostrum with upper tooth-socket pits
-      let pType = 0;
-      if (t > 0.028 && t < 0.305 && ca < -0.54) {
-        const uPal = (t - 0.028) / 0.277;
-        const mouthInset = Math.sin(uPal * Math.PI) * 0.26 * Math.min(1.0, (-ca - 0.54) / 0.32);
+      // Smoothly carved recessed palatal vault beneath spermaceti rostrum (continuous weights — ZERO rectangular seam!)
+      let lipW = 0.0;
+      let mouthW = 0.0;
+      if (t > 0.032 && t < 0.305 && ca < -0.58) {
+        const uPal = (t - 0.032) / 0.273;
+        const envPal = Math.sin(uPal * Math.PI);
+        const angPal = Math.min(1.0, Math.max(0.0, (-ca - 0.58) / 0.36));
+        const smoothAng = angPal * angPal * (3.0 - 2.0 * angPal);
+        const mouthInset = envPal * smoothAng * 0.25;
         y += mouthInset;
-        pType = (-ca > 0.76 && uPal > 0.08 && uPal < 0.88) ? 4 : 2;
+        mouthW = envPal * Math.pow(smoothAng, 1.35);
+        // Soft natural pale rim right along the organic lip contour
+        lipW = envPal * Math.sin(smoothAng * Math.PI) * 0.65;
       }
 
-      ring.push(pushWV(x, y, z, t, sw, pType));
+      ring.push(pushWV(x, y, z, t, sw, 0.0, lipW, mouthW, 0));
     }
     rings.push(ring);
   }
@@ -1114,8 +1436,8 @@ function buildSpermWhaleGeometry() {
     }
   }
 
-  // Cap squared spermaceti prow cleanly
-  const prowTip = pushWV(0, 0.16, 5.11, 0.0, 0.0, 0);
+  // Cap rounded spermaceti prow cleanly
+  const prowTip = pushWV(0, 0.16, 5.13, 0.0, 0.0, 0, 0, 0, 0);
   const firstR = rings[0];
   for (let s = 0; s < nRad; s++) {
     const ns = (s + 1) % nRad;
@@ -1123,36 +1445,37 @@ function buildSpermWhaleGeometry() {
   }
 
   // Taper and weld rear caudal peduncle cleanly inside the central fluke keel
-  const pedTip = pushWV(0, 0.0, -4.88, 1.0, 1.0, 0);
+  const pedTip = pushWV(0, 0.0, -4.90, 1.0, 1.0, 0, 0, 0, 0);
   const lastR = rings[rings.length - 1];
   for (let s = 0; s < nRad; s++) {
     const ns = (s + 1) % nRad;
     idx.push(pedTip, lastR[s], lastR[ns]);
   }
 
-  // ---- Articulated Narrow Underslung Lower Jaw (Mandible with Ivory Lip Rim & Alveolar Ridge) ----
-  const jawSegs = 28;
-  const jawRad = 20;
+  // ---- Articulated Narrow Underslung Lower Jaw (Mandible with Smooth White Lip Margin & Oral Trough) ----
+  const jawSegs = 32;
+  const jawRad = 24;
   const jawRings = [];
   for (let i = 0; i <= jawSegs; i++) {
-    const u = i / jawSegs; // 0 = rounded symphyseal chin tip (+4.68), 1 = gular hinge into throat (+1.95)
-    const z = 4.68 - u * 2.73;
-    const t = 0.032 + u * 0.273;
-    // Narrow rod-like anterior symphysis flaring Y-like at rear condyles
-    const jx = 0.095 + Math.pow(u, 1.48) * 0.39;
-    const jy = 0.125 + u * 0.19;
-    const cy = -0.69 - Math.sin(u * Math.PI * 0.48) * 0.11;
+    const u = i / jawSegs; // 0 = rounded symphyseal chin tip (+4.66), 1 = gular hinge into throat (+1.92)
+    const z = 4.66 - u * 2.74;
+    const t = 0.036 + u * 0.274;
+    // Narrow rod-like anterior symphysis flaring organically into throat condyles
+    const jx = 0.088 + Math.pow(u, 1.52) * 0.38;
+    const jy = 0.118 + u * 0.185;
+    const cy = -0.68 - Math.sin(u * Math.PI * 0.48) * 0.105;
     const sw = 0.04 * (t / 0.34);
     const ring = [];
     for (let s = 0; s < jawRad; s++) {
       const a = (s / jawRad) * Math.PI * 2;
       const sa = Math.sin(a);
       const ca = Math.cos(a);
-      // U-shaped oral trough on dorsal (+ca) face of mandible
-      const oralGroove = ca > 0.35 && Math.abs(sa) < 0.65 ? -0.038 * Math.cos((sa / 0.65) * Math.PI * 0.5) : 0.0;
+      const oralGroove = ca > 0.32 && Math.abs(sa) < 0.68 ? -0.040 * Math.cos((sa / 0.68) * Math.PI * 0.5) : 0.0;
       const vy = cy + ca * jy + oralGroove;
-      const pTag = (ca > 0.55 && u < 0.86) ? 4 : 2;
-      ring.push(pushWV(sa * jx, vy, z, t, sw, pTag));
+      // Smooth continuous lip ivory gradient along upper/side jaw margin + oral cavity inside trough
+      const lipW = Math.max(0.0, Math.min(1.0, (ca + 0.35) * 1.15)) * (1.0 - Math.pow(u, 2.2) * 0.72);
+      const mouthW = ca > 0.45 && u < 0.88 ? Math.min(1.0, (ca - 0.45) / 0.45) : 0.0;
+      ring.push(pushWV(sa * jx, vy, z, t, sw, 0.0, lipW, mouthW, 0));
     }
     jawRings.push(ring);
   }
@@ -1162,27 +1485,27 @@ function buildSpermWhaleGeometry() {
       idx.push(jawRings[i][s], jawRings[i][ns], jawRings[i + 1][ns], jawRings[i][s], jawRings[i + 1][ns], jawRings[i + 1][s]);
     }
   }
-  const jawTip = pushWV(0, -0.67, 4.74, 0.028, 0.0, 2);
+  const jawTip = pushWV(0, -0.66, 4.72, 0.032, 0.0, 0, 0.75, 0, 0);
   for (let s = 0; s < jawRad; s++) {
     const ns = (s + 1) % jawRad;
     idx.push(jawTip, jawRings[0][ns], jawRings[0][s]);
   }
 
-  // ---- 22 Pairs of Curved Conical Ivory Teeth set in Alveolar Gum Collars (partId = 3 & 4) ----
-  const toothPairs = 22;
+  // ---- 24 Pairs of Curved Conical Ivory Teeth (Disconnected hardId = 2) ----
+  const toothPairs = 24;
   const toothSides = 8;
   const toothRings = 3;
   for (let k = 0; k < toothPairs; k++) {
     const u = 0.045 + (k / (toothPairs - 1)) * 0.82;
-    const tz = 4.68 - u * 2.73;
-    const tt = 0.032 + u * 0.273;
-    const jx = 0.095 + Math.pow(Math.max(0.0, u), 1.48) * 0.39;
-    const jy = 0.125 + u * 0.19;
-    const cy = -0.69 - Math.sin(u * Math.PI * 0.48) * 0.11;
+    const tz = 4.66 - u * 2.74;
+    const tt = 0.036 + u * 0.274;
+    const jx = 0.088 + Math.pow(Math.max(0.0, u), 1.52) * 0.38;
+    const jy = 0.118 + u * 0.185;
+    const cy = -0.68 - Math.sin(u * Math.PI * 0.48) * 0.105;
     const sw = 0.04 * (tt / 0.34);
     const toothScale = 0.68 + 0.44 * Math.sin(u * Math.PI);
-    const tR = 0.023 * toothScale;
-    const tH = 0.082 * toothScale;
+    const tR = 0.022 * toothScale;
+    const tH = 0.084 * toothScale;
 
     for (const side of [-1, 1]) {
       const bx = side * jx * 0.74;
@@ -1190,19 +1513,18 @@ function buildSpermWhaleGeometry() {
       const tLevels = [];
       for (let r = 0; r < toothRings; r++) {
         const v = r / toothRings;
-        const rad = tR * (1.0 - v * 0.58) * (r === 0 ? 1.18 : 1.0);
+        const rad = tR * (1.0 - v * 0.58) * (r === 0 ? 1.15 : 1.0);
         const hookIn = -side * Math.pow(v, 1.6) * 0.016;
         const hookBack = -Math.pow(v, 1.5) * 0.012;
-        const yLv = by - 0.012 + v * tH * 0.76;
-        const pTag = r === 0 ? 4 : 3; // Gum collar at base, ivory dentine/enamel above
+        const yLv = by - 0.012 + v * tH * 0.78;
         const ring = [];
         for (let s = 0; s < toothSides; s++) {
           const a = (s / toothSides) * Math.PI * 2;
-          ring.push(pushWV(bx + hookIn + Math.cos(a) * rad, yLv, tz + hookBack + Math.sin(a) * rad, tt, sw, pTag));
+          ring.push(pushWV(bx + hookIn + Math.cos(a) * rad, yLv, tz + hookBack + Math.sin(a) * rad, tt, sw, v, 0, 0, 2));
         }
         tLevels.push(ring);
       }
-      const tipId = pushWV(bx - side * 0.020, by + tH, tz - 0.016, tt, sw, 3);
+      const tipId = pushWV(bx - side * 0.020, by + tH, tz - 0.016, tt, sw, 1.0, 0, 0, 2);
       for (let r = 0; r < toothRings - 1; r++) {
         for (let s = 0; s < toothSides; s++) {
           const ns = (s + 1) % toothSides;
@@ -1217,29 +1539,32 @@ function buildSpermWhaleGeometry() {
     }
   }
 
-  // ---- Filleted Paddle Pectoral Flippers with Phalangeal Ridges (t = 0.37) ----
+  // ---- Watertight Filleted Paddle Pectoral Flippers with Phalangeal Ridges (Auto-Outward-Wound!) ----
   for (const side of [-1, 1]) {
-    const fRows = 14;
-    const fCols = 14;
+    const pecStart = idx.length;
+    const fRows = 18;
+    const fCols = 16;
     const topGrid = [];
     const botGrid = [];
     for (let ir = 0; ir <= fRows; ir++) {
-      const u = ir / fRows; // 0 = filleted shoulder root, 1 = rounded paddle tip
-      const span = side * (0.64 + u * 0.96);
-      const chord = 0.60 * (1.0 - 0.36 * u * u) * (u > 0.80 ? Math.cos(((u - 0.80) / 0.20) * Math.PI * 0.5) : 1.0);
-      const zC = 1.40 - u * 0.44;
-      const yC = -0.35 - u * 0.30;
-      const fillet = u < 0.22 ? Math.pow(1.0 - u / 0.22, 2.0) * 0.85 : 0.0;
-      const thick = (0.115 * (1.0 - u * 0.84) + 0.010) * (1.0 + fillet);
+      const u = ir / fRows;
+      const span = side * (0.62 + u * 0.98);
+      const chord = 0.62 * (1.0 - 0.34 * u * u) * (u > 0.78 ? Math.cos(((u - 0.78) / 0.22) * Math.PI * 0.49) : 1.0);
+      const zC = 1.42 - u * 0.46;
+      const yC = -0.34 - u * 0.32 + Math.sin(u * Math.PI) * 0.05;
+      const fillet = u < 0.24 ? Math.pow(1.0 - u / 0.24, 2.0) * 0.92 : 0.0;
+      const tipTaper = u > 0.86 ? Math.cos(((u - 0.86) / 0.14) * Math.PI * 0.49) : 1.0;
+      const thick = (0.118 * (1.0 - u * 0.82) + 0.010) * (1.0 + fillet) * tipTaper;
       const rTop = [];
       const rBot = [];
       for (let ic = 0; ic <= fCols; ic++) {
         const v = ic / fCols; // 0 = trailing, 1 = leading
         const z = zC + (v - 0.5) * chord;
         const prof = Math.sin(v * Math.PI);
-        const digitRidge = Math.sin(v * Math.PI * 4.0) * 0.008 * u * (1.0 - u);
-        rTop.push(pushWV(span, yC + thick * prof + digitRidge, z, 0.37 + u * 0.03, 0.06, 0));
-        rBot.push(pushWV(span, yC - thick * prof * 0.78, z, 0.37 + u * 0.03, 0.06, 0));
+        const digitRidge = Math.sin(v * Math.PI * 4.0) * 0.009 * u * (1.0 - u);
+        const edgeThin = Math.min(1.0, Math.max(1.0 - v / 0.30, (u - 0.68) / 0.32));
+        rTop.push(pushWV(span, yC + thick * prof + digitRidge, z, 0.37 + u * 0.03, 0.06, Math.max(0, edgeThin), 0, 0, 0));
+        rBot.push(pushWV(span, yC - thick * prof * 0.80, z, 0.37 + u * 0.03, 0.06, Math.max(0, edgeThin), 0, 0, 0));
       }
       topGrid.push(rTop);
       botGrid.push(rBot);
@@ -1255,32 +1580,32 @@ function buildSpermWhaleGeometry() {
         }
       }
     }
+    ensureWhaleOutward(pecStart);
   }
 
-  // ---- Continuous Closed Double-Lobe Horizontal Tail Flukes with Median V-Notch & Tapered Tips ----
+  // ---- Continuous Closed Double-Lobe Horizontal Tail Flukes (80 span segs, V-Notch & Battle Nick) ----
   {
-    const spanSegs = 64; // u in [-1 .. +1], continuous across x = 0 centerline (zero gap)
-    const cols = 18;
+    const flukeStart = idx.length;
+    const spanSegs = 80;
+    const cols = 20;
     const tGrid = [];
     const bGrid = [];
     for (let ir = 0; ir <= spanSegs; ir++) {
-      const u = (ir / spanSegs) * 2.0 - 1.0; // -1 left tip -> 0 centerline -> +1 right tip
+      const u = (ir / spanSegs) * 2.0 - 1.0;
       const au = Math.abs(u);
-      const x = u * 1.48; // ~7.8m full fluke span at 2.65x Mother scale
-      // Smooth elliptical crescent tip taper to zero chord & thickness at outer tips (au = 1.0)
+      const x = u * 1.50; // ~7.95m full colossal fluke span at 2.65x Mother scale
       const tipMask = Math.pow(Math.max(0.0, 1.0 - au * au), 0.72);
-      const leadZ = -4.18 - Math.pow(au, 1.38) * 0.85;
-      // Clean median cetacean V-notch + gentle organic undulating edge + subtle right nick
-      const notchIn = 0.22 * Math.exp(-Math.pow(au / 0.055, 2.0));
-      const gentleWave = Math.sin(au * Math.PI * 2.0) * 0.014 * Math.sin(au * Math.PI);
+      const leadZ = -4.18 - Math.pow(au, 1.38) * 0.86;
+      const notchIn = 0.24 * Math.exp(-Math.pow(au / 0.052, 2.0));
+      const gentleWave = Math.sin(au * Math.PI * 2.0) * 0.016 * Math.sin(au * Math.PI);
       const battleNick = (u > 0.54 && u < 0.65)
-        ? Math.sin(((u - 0.54) / 0.11) * Math.PI) * 0.048
+        ? Math.sin(((u - 0.54) / 0.11) * Math.PI) * 0.054
         : 0.0;
-      const rawTrailZ = -5.04 + notchIn + gentleWave + battleNick - Math.pow(au, 1.45) * 0.12;
+      const rawTrailZ = -5.06 + notchIn + gentleWave + battleNick - Math.pow(au, 1.45) * 0.12;
       const chord = Math.max(0.0, leadZ - rawTrailZ) * tipMask;
       const trailZ = leadZ - chord;
-      const rootFillet = Math.exp(-Math.pow(au / 0.11, 2.0)) * 0.105;
-      const thick = (0.088 * (1.0 - au * 0.68) + rootFillet) * tipMask;
+      const rootFillet = Math.exp(-Math.pow(au / 0.11, 2.0)) * 0.112;
+      const thick = (0.090 * (1.0 - au * 0.68) + rootFillet) * tipMask;
       const rTop = [];
       const rBot = [];
       for (let ic = 0; ic <= cols; ic++) {
@@ -1288,32 +1613,33 @@ function buildSpermWhaleGeometry() {
         const z = trailZ + v * chord;
         const naca = Math.sin(Math.pow(v, 0.75) * Math.PI);
         const t = 0.935 + (1.0 - v) * 0.065;
-        rTop.push(pushWV(x, thick * naca, z, t, 1.0, 0));
-        rBot.push(pushWV(x, -thick * naca, z, t, 1.0, 0));
+        const edgeThin = Math.min(1.0, Math.max(1.0 - v / 0.34, (au - 0.68) / 0.32));
+        rTop.push(pushWV(x, thick * naca, z, t, 1.0, Math.max(0, edgeThin), 0, 0, 0));
+        rBot.push(pushWV(x, -thick * naca, z, t, 1.0, Math.max(0, edgeThin), 0, 0, 0));
       }
       tGrid.push(rTop);
       bGrid.push(rBot);
     }
     for (let ir = 0; ir < spanSegs; ir++) {
       for (let ic = 0; ic < cols; ic++) {
-        // Uniform CCW outward normals: +Y on tGrid, -Y on bGrid across entire span
         idx.push(tGrid[ir][ic], tGrid[ir][ic + 1], tGrid[ir + 1][ic + 1], tGrid[ir][ic], tGrid[ir + 1][ic + 1], tGrid[ir + 1][ic]);
         idx.push(bGrid[ir][ic], bGrid[ir + 1][ic + 1], bGrid[ir][ic + 1], bGrid[ir][ic], bGrid[ir + 1][ic], bGrid[ir + 1][ic + 1]);
       }
     }
+    ensureWhaleOutward(flukeStart);
   }
 
-  // ---- Glossy Cetacean Eyes Tucked Inside Temporal Eye Sockets ----
-  const eyeGeo = new THREE.SphereGeometry(0.082, 16, 12);
+  // ---- Glossy Cetacean Eyes tucked deeply inside Temporal Orbital Sockets (Disconnected hardId = 1) ----
+  const eyeGeo = new THREE.SphereGeometry(0.084, 18, 14);
   const eyePos = eyeGeo.getAttribute('position');
   const eyeIdx = eyeGeo.index;
   for (const side of [-1, 1]) {
     const baseV = pos.length / 3;
-    const ex = side * 0.895;
+    const ex = side * 0.875;
     const ey = -0.31;
     const ez = 2.04;
     for (let i = 0; i < eyePos.count; i++) {
-      pushWV(ex + eyePos.getX(i) * 0.65, ey + eyePos.getY(i), ez + eyePos.getZ(i) * 1.15, 0.305, 0.04, 1);
+      pushWV(ex + eyePos.getX(i) * 0.66, ey + eyePos.getY(i), ez + eyePos.getZ(i) * 1.15, 0.305, 0.04, 0, 0, 0, 1);
     }
     for (let i = 0; i < eyeIdx.count; i += 3) {
       idx.push(baseV + eyeIdx.getX(i), baseV + eyeIdx.getX(i + 1), baseV + eyeIdx.getX(i + 2));
@@ -1321,10 +1647,84 @@ function buildSpermWhaleGeometry() {
   }
   eyeGeo.dispose();
 
+  // ---- 3D Encrusting Whale Barnacle Clusters (Coronula volcano shells, Disconnected hardId = 3) ----
+  const barnacleSpots = [
+    // Lower chin & jaw tip clusters
+    [0.04, -0.77, 4.58, 0.036, 0, -1, 0.25, 0.045, 0.005],
+    [-0.05, -0.78, 4.46, 0.032, -0.2, -0.95, 0.15, 0.058, 0.007],
+    [0.08, -0.79, 4.22, 0.034, 0.25, -0.92, 0.1, 0.082, 0.010],
+    [-0.10, -0.80, 3.92, 0.030, -0.3, -0.92, 0.0, 0.112, 0.014],
+    [0.14, -0.82, 3.55, 0.036, 0.35, -0.90, 0.0, 0.150, 0.018],
+    // Forehead / spermaceti prow scars & callosities
+    [0.48, 0.62, 4.55, 0.042, 0.72, 0.55, 0.42, 0.050, 0.006],
+    [0.54, 0.52, 4.42, 0.030, 0.78, 0.45, 0.38, 0.062, 0.008],
+    [-0.50, 0.44, 4.48, 0.040, -0.78, 0.40, 0.42, 0.058, 0.007],
+    [-0.56, 0.36, 4.30, 0.028, -0.82, 0.32, 0.35, 0.075, 0.009],
+    // Pectoral leading edge barnacles (both flippers)
+    [1.12, -0.45, 1.44, 0.038, 0.25, 0.45, 0.85, 0.38, 0.06],
+    [1.24, -0.50, 1.38, 0.030, 0.28, 0.40, 0.86, 0.39, 0.06],
+    [-1.15, -0.46, 1.42, 0.036, -0.25, 0.45, 0.85, 0.38, 0.06],
+    [-1.30, -0.53, 1.32, 0.028, -0.28, 0.42, 0.84, 0.39, 0.06],
+    // Dorsal hump & knuckle crest barnacles
+    [0.06, 1.24, -0.86, 0.040, 0.15, 0.98, 0.0, 0.605, 0.26],
+    [-0.08, 1.20, -0.96, 0.032, -0.20, 0.96, 0.0, 0.615, 0.28],
+    // Tail fluke leading edge barnacles
+    [1.06, 0.03, -4.64, 0.036, 0.2, 0.6, 0.75, 0.95, 1.0],
+    [-1.12, 0.03, -4.68, 0.034, -0.2, 0.6, 0.75, 0.95, 1.0],
+  ];
+  for (const bs of barnacleSpots) {
+    const [bx, by, bz, r, nx, ny, nz, bt, bsw] = bs;
+    const nl = Math.hypot(nx, ny, nz) || 1;
+    const ux = nx / nl, uy = ny / nl, uz = nz / nl;
+    // Build tangent basis around outward normal u
+    const refX = Math.abs(uy) < 0.9 ? 0 : 1;
+    const refY = Math.abs(uy) < 0.9 ? 1 : 0;
+    let tx = refY * uz - 0 * uy;
+    let ty = 0 * ux - refX * uz;
+    let tz = refX * uy - refY * ux;
+    const tl = Math.hypot(tx, ty, tz) || 1;
+    tx /= tl; ty /= tl; tz /= tl;
+    const vx = uy * tz - uz * ty;
+    const vy = uz * tx - ux * tz;
+    const vz = ux * ty - uy * tx;
+
+    const bStart = idx.length;
+    const sides = 7;
+    const h = r * 0.72;
+    const baseR = [];
+    const topR = [];
+    for (let s = 0; s < sides; s++) {
+      const a = (s / sides) * Math.PI * 2;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const rib = 1.0 + 0.14 * Math.cos(a * 6.0);
+      const rb = r * rib;
+      const rt = r * 0.44 * rib;
+      baseR.push(pushWV(
+        bx + (tx * ca + vx * sa) * rb - ux * h * 0.25,
+        by + (ty * ca + vy * sa) * rb - uy * h * 0.25,
+        bz + (tz * ca + vz * sa) * rb - uz * h * 0.25,
+        bt, bsw, 0.0, 0, 0, 3
+      ));
+      topR.push(pushWV(
+        bx + (tx * ca + vx * sa) * rt + ux * h,
+        by + (ty * ca + vy * sa) * rt + uy * h,
+        bz + (tz * ca + vz * sa) * rt + uz * h,
+        bt, bsw, 1.0, 0, 0, 3
+      ));
+    }
+    const crater = pushWV(bx + ux * h * 0.42, by + uy * h * 0.42, bz + uz * h * 0.42, bt, bsw, 0.0, 0, 0, 3);
+    for (let s = 0; s < sides; s++) {
+      const ns = (s + 1) % sides;
+      idx.push(baseR[s], baseR[ns], topR[ns], baseR[s], topR[ns], topR[s]);
+      idx.push(topR[s], topR[ns], crater);
+    }
+    ensureWhaleOutward(bStart);
+  }
+
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('aSpineCoord', new THREE.Float32BufferAttribute(spineCoord, 2));
-  geo.setAttribute('aPartId', new THREE.Float32BufferAttribute(partId, 1));
+  geo.setAttribute('aMatWeights', new THREE.Float32BufferAttribute(matWeights, 4));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
@@ -1343,7 +1743,7 @@ const WHALE_WAVE_GLSL = `
       p.y -= jawArm * clickOpen;
     }
 
-    // 2. Smooth spanwise flex lag across the broad 7.7m tail flukes (constant along chord for clean hydrofoil cam)
+    // 2. Smooth spanwise flex lag across the broad 7.9m tail flukes
     float spanLag = pow(max(0.0, abs(p.x) - 0.22), 1.25) * 0.095 * smoothstep(0.55, 0.91, t);
     float kPhase = st.x - t * 4.6 - spanLag;
     float wave = sin(kPhase);
@@ -1381,7 +1781,7 @@ const WHALE_WAVE_GLSL = `
 function createWhaleMaterial(sharedUniforms, whaleUniforms) {
   const vs = /* glsl */ `
     attribute vec2 aSpineCoord;
-    attribute float aPartId;
+    attribute vec4 aMatWeights;
 
     uniform vec4 uWhaleState;
     uniform vec2 uWhaleLook;
@@ -1394,7 +1794,7 @@ function createWhaleMaterial(sharedUniforms, whaleUniforms) {
     out vec3 vLPos;
     out vec3 vLNorm;
     out vec2 vSpine;
-    out float vPart;
+    out vec4 vMatW;
 
     void main() {
       vec3 lp = whaleDeform(position, aSpineCoord, uWhaleState, uWhaleLook);
@@ -1402,7 +1802,7 @@ function createWhaleMaterial(sharedUniforms, whaleUniforms) {
       // Unclamped centered finite-difference Jacobian transpose normal transform
       float t0 = aSpineCoord.x - 0.012;
       float t1 = aSpineCoord.x + 0.012;
-      float dz = -(t1 - t0) * 9.80;
+      float dz = -(t1 - t0) * 9.82;
       vec3 d0 = whaleDeform(position, vec2(t0, aSpineCoord.y), uWhaleState, uWhaleLook);
       vec3 d1 = whaleDeform(position, vec2(t1, aSpineCoord.y), uWhaleState, uWhaleLook);
       vec3 dDdz = (d1 - d0) / dz;
@@ -1420,7 +1820,7 @@ function createWhaleMaterial(sharedUniforms, whaleUniforms) {
       vLPos = position;
       vLNorm = normal;
       vSpine = aSpineCoord;
-      vPart = aPartId;
+      vMatW = aMatWeights;
       gl_Position = projectionMatrix * viewMatrix * wp;
     }
   `;
@@ -1429,173 +1829,251 @@ function createWhaleMaterial(sharedUniforms, whaleUniforms) {
     precision highp float;
     precision highp sampler3D;
 
+    uniform vec4 uWhaleState;
+    uniform float uWhaleAge; // 1.0 = weathered veteran Mother, 0.28 = sleeker younger Calf
+
     ${MEDIUM_GLSL}
+    ${SURFACE_GRADIENT_BUMP_GLSL}
 
     in vec3 vWPos;
     in vec3 vWNorm;
     in vec3 vLPos;
     in vec3 vLNorm;
     in vec2 vSpine;
-    in float vPart;
+    in vec4 vMatW;
 
     layout(location = 0) out vec4 fragColor;
 
-    // Procedural Giant Squid (Architeuthis) Sucker-Ring Scars & Parallel Tooth/Beak Rakes
-    // Returns vec2(scarBrightness [0..1], normalBump [-1..1])
-    vec2 squidScarsAndRakes(vec3 lp, float spineT) {
-      float headWeight = 1.0 - smoothstep(0.18, 0.52, spineT);
-      if (headWeight <= 0.01) return vec2(0.0);
+    // Multi-Scale Giant Squid (Architeuthis) Sucker-Ring Crater Scars & Parallel Rake Slashes
+    // Returns vec3(scarAlbedo [0..1], craterHeight [-1..1], rakeAO [0..1])
+    vec3 squidScarsAndRakes(vec3 lp, float spineT, float age) {
+      float headWeight = (1.0 - smoothstep(0.22, 0.62, spineT)) * (0.35 + 0.65 * age);
+      if (headWeight <= 0.01) return vec3(0.0);
 
-      vec2 uv = vec2(lp.z * 2.8, atan(lp.x, lp.y + 0.1) * 3.2);
-      // 1. Circular serrated Giant Squid sucker ring scars across spermaceti prow
-      vec2 cell = floor(uv * 2.4);
-      vec2 f = fract(uv * 2.4) - 0.5;
-      float h = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
-      float suckerMask = 0.0;
-      if (h > 0.56) {
-        vec2 offset = vec2(fract(h * 13.7) - 0.5, fract(h * 29.3) - 0.5) * 0.42;
-        float rad = mix(0.16, 0.34, fract(h * 7.1));
-        float d = length(f - offset);
-        float ring = exp(-pow((d - rad) / 0.042, 2.0));
-        suckerMask = ring * step(0.56, h);
+      vec2 uv = vec2(lp.z * 2.5, atan(lp.x, lp.y + 0.12) * 3.0);
+
+      // 1. Two octaves of circular serrated Giant Squid sucker-ring imprints (raised scar rim + recessed pit!)
+      float suckerVis = 0.0;
+      float suckerH = 0.0;
+      for (int oct = 0; oct < 2; oct++) {
+        float sc = oct == 0 ? 2.1 : 3.6;
+        vec2 p = uv * sc + vec2(float(oct) * 11.3, float(oct) * 5.7);
+        vec2 cell = floor(p);
+        vec2 f = fract(p) - 0.5;
+        float h = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+        if (h > 0.50) {
+          vec2 offset = vec2(fract(h * 13.7) - 0.5, fract(h * 29.3) - 0.5) * 0.40;
+          float rad = mix(0.15, 0.33, fract(h * 7.1));
+          float d = length(f - offset);
+          float rim = exp(-pow((d - rad) / 0.042, 2.0));
+          float pit = exp(-pow(d / max(rad * 0.65, 0.05), 2.0));
+          float w = (oct == 0 ? 0.92 : 0.68);
+          suckerVis += rim * w;
+          suckerH += (rim * 0.85 - pit * 0.45) * w;
+        }
       }
 
-      // 2. Intersecting parallel linear rake scars (squid tentacle hooks & conspecific tooth rakes)
-      float rake1 = exp(-pow(sin(uv.x * 6.5 + uv.y * 4.2 + sin(uv.x * 1.7) * 0.8), 2.0) * 95.0)
-        * smoothstep(0.45, 0.85, sin(uv.x * 1.1 - uv.y * 0.9));
-      float rake2 = exp(-pow(sin(uv.x * 5.2 - uv.y * 5.8 + cos(uv.y * 1.9) * 0.7), 2.0) * 110.0)
-        * smoothstep(0.50, 0.88, cos(uv.x * 0.8 + uv.y * 1.3));
-      float rake3 = exp(-pow(sin(uv.x * 9.0 + uv.y * 2.1), 2.0) * 120.0)
-        * smoothstep(0.60, 0.92, sin(uv.x * 1.9 + 1.2));
+      // 2. Intersecting parallel linear rake scars (squid hooks & bull whale tooth rakes)
+      float r1 = exp(-pow(sin(uv.x * 5.8 + uv.y * 4.4 + sin(uv.x * 1.6) * 0.9), 2.0) * 110.0)
+        * smoothstep(0.38, 0.82, sin(uv.x * 0.95 - uv.y * 0.85));
+      float r2 = exp(-pow(sin(uv.x * 4.9 - uv.y * 5.6 + cos(uv.y * 1.8) * 0.8), 2.0) * 125.0)
+        * smoothstep(0.45, 0.86, cos(uv.x * 0.78 + uv.y * 1.25));
+      float r3 = exp(-pow(sin(uv.x * 8.6 + uv.y * 2.2), 2.0) * 145.0)
+        * smoothstep(0.55, 0.90, sin(uv.x * 1.85 + 1.1));
+      // Long sweeping healed forehead slash across Mother's prow
+      float heroSlash = exp(-pow((lp.y - 0.36 + (lp.z - 3.6) * 0.34) / 0.022, 2.0))
+        * smoothstep(2.4, 3.2, lp.z) * (1.0 - smoothstep(4.2, 4.9, lp.z)) * age;
 
-      float totalScar = clamp((suckerMask * 0.85 + (rake1 + rake2 + rake3) * 0.75) * headWeight, 0.0, 1.0);
-      float bump = (suckerMask - (rake1 + rake2) * 0.6) * headWeight;
-      return vec2(totalScar, bump);
+      float rakes = clamp((r1 + r2 + r3) * 0.75 + heroSlash * 1.15, 0.0, 1.3);
+      float totalScar = clamp((suckerVis * 0.85 + rakes * 0.82) * headWeight, 0.0, 1.0);
+      float heightOut = (suckerH * 0.75 - rakes * 0.68) * headWeight;
+      float aoOut = clamp(rakes * 0.45 * headWeight, 0.0, 0.55);
+      return vec3(totalScar, heightOut, aoOut);
     }
 
     void main() {
       vec3 gn = normalize(vWNorm);
-      // Multi-scale cetacean skin detail: macro prune-like corrugations + medium weathered dermis + fine epidermal pores
-      TP tp = tri(vLPos * 1.8, gn);
-      TP fine = tri(vLPos * 6.2, gn);
-      TP micro = tri(vLPos * 19.0, gn);
+      float finEdgeW = vMatW.x;
+      float lipIvoryW = vMatW.y;
+      float mouthCavW = vMatW.z;
+      float hardId = vMatW.w;
 
-      float isPec = smoothstep(0.65, 1.35, abs(vLPos.x)) * (1.0 - smoothstep(0.55, 0.90, vSpine.x));
-      float isFluke = smoothstep(0.935, 0.975, vSpine.x);
-      float finEdgeMask = clamp(max(isPec, isFluke) * smoothstep(0.20, 0.75, abs(vLPos.x) * 0.45 + (1.0 - abs(vLNorm.y)) * 0.55), 0.0, 1.0);
-      float flukeBladeMask = clamp(max(isPec * 0.65, smoothstep(0.91, 0.96, vSpine.x)), 0.0, 1.0);
-      float bumpScale = mix(1.0, 0.28, flukeBladeMask);
+      // Disconnected sub-mesh masks (ZERO shared-vertex interpolation artifacts!)
+      float eyeMask = step(0.5, hardId) * step(hardId, 1.5);
+      float toothMask = step(1.5, hardId) * step(hardId, 2.5);
+      float barnacleMask = step(2.5, hardId);
+      float hideOnly = 1.0 - clamp(eyeMask + toothMask + barnacleMask, 0.0, 1.0);
 
-      // Authentic longitudinal "prune-like" skin corrugations along posterior 2/3 of whale body
-      float corrMask = smoothstep(0.28, 0.45, vSpine.x) * (1.0 - smoothstep(0.84, 0.93, vSpine.x));
-      float wrinkleWave = (sin(vLPos.y * 16.0 + tp.h * 4.2) * 0.65 + cos(vLPos.z * 9.5 + fine.h * 3.5) * 0.35) * corrMask;
-      vec2 scarData = squidScarsAndRakes(vLPos, vSpine.x);
+      // Multi-scale organic cetacean hide triplanar sampling
+      TP tpMacro = tri(vLPos * 1.45, gn);
+      TP tpMed = tri(vLPos * 5.2, gn);
+      TP tpMicro = tri(vLPos * 18.5, gn);
 
-      vec3 N = normalize(
-        gn +
-        (tp.n * 0.22 + fine.n * 0.16 + micro.n * 0.09) * bumpScale +
-        vec3(0.0, wrinkleWave * 0.16 + scarData.y * 0.10, wrinkleWave * 0.10 - scarData.y * 0.10)
-      );
+      float isPec = smoothstep(0.62, 1.35, abs(vLPos.x)) * (1.0 - smoothstep(0.52, 0.88, vSpine.x));
+      float isFluke = smoothstep(0.925, 0.975, vSpine.x);
+      float flukeBladeMask = clamp(max(isPec * 0.65, isFluke), 0.0, 1.0);
+      float bumpWeight = mix(1.0, 0.34, flukeBladeMask) * hideOnly;
 
-      // AAA Physeter macrocephalus Rich Pelagic Slate-Charcoal Hide Palette
-      vec3 backCol = vec3(0.042, 0.052, 0.068); // Deep weathered dark slate-charcoal dorsal hide
-      vec3 plumWarm = vec3(0.088, 0.082, 0.098); // Subtle warm brownish-plum undertone in sunlight
-      vec3 flankCol = mix(vec3(0.072, 0.086, 0.108), plumWarm, 0.38);
-      vec3 bellyBase = vec3(0.145, 0.162, 0.185);
-      // Characteristic piebald white/grey umbilical & throat splash patch on ventral belly
-      float piebald = smoothstep(0.46, 0.72, tp.c * 0.65 + fine.c * 0.35) * smoothstep(0.18, 0.65, vSpine.x) * (1.0 - smoothstep(0.65, 0.85, vSpine.x));
-      vec3 bellyCol = mix(bellyBase, vec3(0.36, 0.38, 0.41), piebald * 0.82);
+      // ---- Iconic Organic "Prune-Skin" Corrugated Wrinkles (Domain-Warped, Faded over Smooth Dorsal Hump!) ----
+      float humpSmooth = 1.0 - exp(-pow((vSpine.x - 0.605) / 0.068, 2.0)) * smoothstep(0.45, 0.85, vLNorm.y);
+      float corrMask = smoothstep(0.24, 0.44, vSpine.x) * (1.0 - smoothstep(0.85, 0.94, vSpine.x)) * humpSmooth;
+      float flexCompress = 1.0 + abs(uWhaleState.y) * 0.50 + 0.18 * abs(sin(uWhaleState.x - vSpine.x * 4.6));
+      float angleCoord = atan(vLPos.x, vLPos.y + 0.05);
+      // Domain-warped organic meandering leather folds (breaks up synthetic parallel stripes!)
+      float warp = tpMacro.h * 6.8 + tpMed.c * 3.2;
+      float fold1 = sin(angleCoord * 17.0 + vLPos.z * 2.8 + warp);
+      float fold2 = cos(angleCoord * 29.0 - vLPos.z * 5.4 + tpMed.h * 5.2);
+      float fold3 = sin(vLPos.z * 13.5 + angleCoord * 8.0 + tpMacro.c * 4.5);
+      float pruneRidge = (pow(0.5 + 0.5 * fold1, 0.72) * 0.50 + pow(0.5 + 0.5 * fold2, 0.78) * 0.30 + (0.5 + 0.5 * fold3) * 0.20);
+      float pruneTrough = 1.0 - smoothstep(0.16, 0.52, pruneRidge);
+      float pruneHeight = (pruneRidge - 0.5) * corrMask * flexCompress * (0.58 + 0.42 * uWhaleAge);
 
-      float vGrad = smoothstep(-0.68, 0.42, vLPos.y + (tp.h - 0.5) * 0.16);
-      vec3 skinCol = mix(bellyCol, mix(flankCol, backCol, smoothstep(0.15, 0.65, vLPos.y)), vGrad);
+      // Peeling sloughing epidermis patches (distinct stepped papery edge on older Mother Whale)
+      float sloughRaw = tpMacro.c * 0.62 + tpMed.h * 0.38;
+      float sloughPatch = smoothstep(0.58, 0.65, sloughRaw) * (0.35 + 0.65 * uWhaleAge) * hideOnly;
+      float sloughEdge = smoothstep(0.56, 0.61, sloughRaw) * (1.0 - smoothstep(0.62, 0.67, sloughRaw));
 
-      // Sloughed epidermis mottling & weathered dorsal hump callosity patches
-      float slough = smoothstep(0.32, 0.78, tp.c * 0.6 + fine.h * 0.4);
-      skinCol *= mix(0.84, 1.14, slough);
-      float humpCallus = exp(-pow((vSpine.x - 0.605) / 0.055, 2.0)) * smoothstep(0.65, 0.92, vLNorm.y) * smoothstep(0.48, 0.72, fine.c);
-      skinCol = mix(skinCol, vec3(0.24, 0.25, 0.27), humpCallus * 0.60);
+      // Giant Squid battle scars & sucker-ring craters
+      vec3 scarData = squidScarsAndRakes(vLPos, vSpine.x, uWhaleAge);
 
-      // Stamp pale Giant Squid sucker rings & linear tooth rake battle scars across spermaceti head & jaws
-      float headMottle = (1.0 - smoothstep(0.24, 0.44, vSpine.x)) * smoothstep(0.58, 0.78, fine.c);
-      float totalScarMask = clamp(scarData.x + headMottle * 0.32, 0.0, 1.0);
-      skinCol = mix(skinCol, vec3(0.34, 0.36, 0.40), totalScarMask * 0.75);
+      // Compute true 4K-equivalent Mikkelsen surface-gradient micro-normal relief in world space!
+      float totalHeight = (
+        pruneHeight * 0.92 +
+        (tpMacro.h - 0.5) * 0.52 +
+        (tpMed.h - 0.5) * 0.34 +
+        (tpMicro.h - 0.5) * 0.16 +
+        scarData.y * 0.95 -
+        sloughPatch * 0.20
+      ) * bumpWeight;
+      // Add calcified radial ribbing bump on 3D barnacles
+      if (barnacleMask > 0.5) {
+        totalHeight = tpMicro.h * 0.8 + tpMed.h * 0.6;
+      }
+      vec3 N = perturbNormalBump(vWPos, gn, totalHeight, mix(0.026, 0.014, flukeBladeMask));
+      N = normalize(N + (tpMacro.n * 0.14 + tpMicro.n * 0.08) * bumpWeight);
 
-      // Signature white/ivory lower jaw lip margin & palatal skin (partId ~ 2)
-      float jawMask = smoothstep(1.5, 1.9, vPart) * (1.0 - smoothstep(2.4, 2.7, vPart));
-      float lipEdge = smoothstep(-0.78, -0.52, vLPos.y) * smoothstep(0.06, 0.22, abs(vLPos.x));
-      skinCol = mix(skinCol, vec3(0.46, 0.47, 0.45), jawMask * (0.38 + 0.58 * lipEdge));
+      // ---- Rich Photorealistic Physeter macrocephalus Pelagic Hide Palette ----
+      vec3 dorsalObsidian = vec3(0.032, 0.040, 0.054); // Deep wet obsidian-slate dorsal hide
+      vec3 weatheredBronze = vec3(0.078, 0.068, 0.072); // Subtle warm brownish-charcoal melanin undertone
+      vec3 flankSlate = mix(vec3(0.058, 0.070, 0.088), weatheredBronze, 0.42);
+      vec3 bellyBase = vec3(0.115, 0.132, 0.152);
 
-      // Pinkish-ivory alveolar gum sockets & palatal vault inside mouth (partId ~ 4)
-      float gumMask = smoothstep(3.5, 3.9, vPart) * (1.0 - smoothstep(4.2, 4.6, vPart));
-      skinCol = mix(skinCol, vec3(0.40, 0.24, 0.25), gumMask * 0.88);
+      // Characteristic piebald pale-grey umbilical & throat splash patch on ventral belly
+      float piebald = smoothstep(0.46, 0.74, tpMacro.c * 0.65 + tpMed.c * 0.35)
+        * smoothstep(0.18, 0.65, vSpine.x) * (1.0 - smoothstep(0.66, 0.86, vSpine.x));
+      vec3 bellyCol = mix(bellyBase, vec3(0.32, 0.34, 0.37), piebald * 0.80);
 
-      // Curved conical ivory teeth with dark cementum root transition (partId ~ 3)
-      float toothMask = smoothstep(2.55, 2.95, vPart) * (1.0 - smoothstep(3.2, 3.6, vPart));
-      vec3 ivoryCol = mix(vec3(0.58, 0.52, 0.42), vec3(0.84, 0.80, 0.72), smoothstep(-0.62, -0.54, vLPos.y));
-      skinCol = mix(skinCol, ivoryCol, toothMask);
+      float vGrad = smoothstep(-0.68, 0.44, vLPos.y + (tpMacro.h - 0.5) * 0.18);
+      vec3 skinCol = mix(bellyCol, mix(flankSlate, dorsalObsidian, smoothstep(0.12, 0.65, vLPos.y)), vGrad);
 
-      // Glossy cetacean eye with warm chestnut-brown iris ring & dark pupil (partId ~ 1)
-      float eyeMask = 1.0 - smoothstep(0.0, 0.4, abs(vPart - 1.0));
-      if (eyeMask > 0.01) {
-        vec2 eyeRel = vec2((vLPos.z - 2.04) / 0.085, (vLPos.y + 0.31) / 0.075);
-        float eyeR = length(eyeRel);
-        float pupil = 1.0 - smoothstep(0.36, 0.52, eyeR);
-        float iris = (1.0 - pupil) * (1.0 - smoothstep(0.74, 0.94, eyeR));
-        vec3 eyeCol = mix(vec3(0.02, 0.025, 0.03), vec3(0.18, 0.12, 0.08), iris);
-        eyeCol = mix(eyeCol, vec3(0.005, 0.007, 0.01), pupil);
-        skinCol = mix(skinCol, eyeCol, eyeMask);
+      // Slight age melanin shift: younger Calf is sleeker & richer slate-charcoal, older Mother has more weathered patina
+      skinCol *= mix(0.86, 1.04, uWhaleAge);
+
+      // Peeling sloughing epidermis patches (paler dusty slate-silver with crisp thin peel rim)
+      vec3 sloughCol = skinCol * 1.48 + vec3(0.045, 0.048, 0.052);
+      skinCol = mix(skinCol, sloughCol, sloughPatch * 0.55);
+      skinCol = mix(skinCol, vec3(0.34, 0.36, 0.38), sloughEdge * 0.32 * uWhaleAge * hideOnly);
+
+      // Weathered dorsal hump & knuckle crest callosities
+      float humpCallus = exp(-pow((vSpine.x - 0.605) / 0.058, 2.0)) * smoothstep(0.62, 0.90, vLNorm.y) * smoothstep(0.44, 0.72, tpMed.c);
+      skinCol = mix(skinCol, vec3(0.22, 0.23, 0.25), humpCallus * 0.62 * (0.4 + 0.6 * uWhaleAge));
+
+      // Pale-silver Giant Squid sucker-ring scars & linear tooth rake battle slashes across forehead & cheeks
+      float headMottle = (1.0 - smoothstep(0.22, 0.44, vSpine.x)) * smoothstep(0.56, 0.78, tpMed.c) * uWhaleAge;
+      float totalScarMask = clamp(scarData.x + headMottle * 0.28, 0.0, 1.0) * hideOnly;
+      vec3 scarCol = mix(vec3(0.30, 0.33, 0.37), vec3(0.46, 0.48, 0.51), scarData.x);
+      skinCol = mix(skinCol, scarCol, totalScarMask * 0.78);
+
+      // Smooth organic pale-ivory lower jaw lip margin (NO rectangular box seam!)
+      float organicLip = lipIvoryW * (0.55 + 0.45 * tpMed.h) * hideOnly;
+      skinCol = mix(skinCol, vec3(0.40, 0.42, 0.42), organicLip * 0.76);
+
+      // Recessed dark fleshy palatal vault & pinkish-mauve gum sockets inside jaw
+      float gumMask = smoothstep(0.18, 0.85, mouthCavW) * hideOnly;
+      skinCol = mix(skinCol, vec3(0.26, 0.14, 0.16), gumMask * 0.88);
+
+      // Deep micro-cavity AO inside prune-skin wrinkle troughs, throat grooves, rake scars & eye socket
+      float eyeSocketAO = 1.0 - 0.42 * exp(-pow((vLPos.z - 2.04) / 0.24, 2.0) - pow((vLPos.y + 0.31) / 0.18, 2.0)) * hideOnly;
+      float wrinkleAO = 1.0 - pruneTrough * corrMask * 0.36 * (0.55 + 0.45 * uWhaleAge);
+      float baseAO = mix(0.72, 1.06, smoothstep(0.22, 0.78, tpMacro.h * 0.58 + tpMed.h * 0.42));
+      skinCol *= wrinkleAO * baseAO * eyeSocketAO * (1.0 - scarData.z * 0.35);
+
+      float roughness = mix(0.34, 0.48, sloughPatch * 0.65);
+      float specStr = mix(0.42, 0.22, sloughPatch * 0.65);
+
+      // ---- 3D Encrusting Calcified Whale Barnacles (Disconnected hardId = 3) ----
+      if (barnacleMask > 0.5) {
+        vec3 shellCol = mix(vec3(0.56, 0.55, 0.48), vec3(0.76, 0.74, 0.66), finEdgeW);
+        // Dark volcano aperture crater & greenish algae base rim
+        shellCol = mix(vec3(0.18, 0.21, 0.16), shellCol, smoothstep(0.05, 0.35, finEdgeW));
+        skinCol = shellCol * (0.82 + 0.32 * tpMicro.h);
+        roughness = 0.62;
+        specStr = 0.18;
       }
 
-      // Micro-cavity self-occlusion inside deep longitudinal skin folds & throat grooves
-      float creaseAO = mix(0.68, 1.06, smoothstep(0.25, 0.75, tp.h * 0.6 + fine.h * 0.4));
-      skinCol *= creaseAO;
+      // ---- Curved Conical Ivory Teeth (Disconnected hardId = 2) ----
+      if (toothMask > 0.5) {
+        skinCol = mix(vec3(0.48, 0.42, 0.33), vec3(0.86, 0.82, 0.74), smoothstep(0.12, 0.85, finEdgeW));
+        roughness = 0.14;
+        specStr = 0.95;
+      }
 
-      float roughness = mix(0.36, 0.08, max(eyeMask, toothMask * 0.65));
-      float specStr = mix(0.30, 1.10, max(eyeMask, toothMask * 0.55));
+      // ---- Lifelike Glossy Cetacean Eye with Chestnut-Mahogany Iris & Crisp Catchlight (Disconnected hardId = 1) ----
+      if (eyeMask > 0.5) {
+        vec2 eyeRel = vec2((vLPos.z - 2.04) / 0.088, (vLPos.y + 0.31) / 0.078);
+        float eyeR = length(eyeRel);
+        float pupil = 1.0 - smoothstep(0.36, 0.52, eyeR);
+        float iris = (1.0 - pupil) * (1.0 - smoothstep(0.74, 0.95, eyeR));
+        vec3 eyeCol = mix(vec3(0.015, 0.020, 0.025), vec3(0.20, 0.12, 0.07), iris);
+        eyeCol = mix(eyeCol, vec3(0.004, 0.005, 0.008), pupil);
+        skinCol = eyeCol;
+        roughness = 0.04;
+        specStr = 1.65;
+      }
 
       vec3 V = normalize(uCamPos - vWPos);
       float ndv = max(dot(N, V), 0.02);
       float sh = shadow9(vWPos);
 
-      // ---- 1. Underwater Physically Based Lighting, Subsurface Scattering & Soft-Knee Chromatic Caustics ----
+      // ---- 1. Underwater Dual-Lobe PBR Lighting, Chromatic Caustics & Cetacean Dermal SSS ----
       vec3 caRaw = causRGB(vWPos);
-      vec3 ca = caRaw / (1.0 + caRaw * 0.85);
+      vec3 ca = caRaw / (1.0 + caRaw * 0.72);
       vec3 sunIrr = sunE(vWPos);
-      float ndl = max(dot(N, uSunDir), 0.0);
-      float wrapNdl = max(0.0, (dot(N, uSunDir) + 0.18) / 1.18);
-      vec3 directUW = sunIrr * wrapNdl * sh * (0.42 + ca * 0.85);
-      vec3 bellyBounce = vec3(0.12, 0.18, 0.20) * max(-N.y, 0.0);
+      float wrapNdl = max(0.0, (dot(N, uSunDir) + 0.16) / 1.16);
+      vec3 directUW = sunIrr * wrapNdl * sh * (0.48 + ca * 1.05);
+      vec3 bellyBounce = vec3(0.14, 0.21, 0.23) * max(-N.y, 0.0);
       vec3 ambientUW = amb(vWPos, N) + sideLight(vWPos, N) + bellyBounce;
 
-      // Dual-lobe wet cetacean specular: disciplined oily dermis sheen + crisp seawater film GGX coat
+      // Dual-lobe wet cetacean specular: oily dermal satin + tight mirror seawater clearcoat
       vec3 H_uw = normalize(V + uSunDir);
       float ndh_uw = max(dot(N, H_uw), 0.0);
       float alphaSq = pow(roughness, 4.0);
       float denom = ndh_uw * ndh_uw * (alphaSq - 1.0) + 1.0;
       float D_ggx = alphaSq / max(3.14159 * denom * denom, 1e-4);
-      float fresnelUW = 0.025 + 0.975 * pow(1.0 - max(dot(H_uw, V), 0.0), 5.0);
-      float broadSheen = pow(ndh_uw, 24.0) * 0.10 + pow(1.0 - ndv, 4.2) * 0.11;
-      float specUW = (D_ggx * fresnelUW * specStr + broadSheen) * sh;
+      float fresnelUW = 0.028 + 0.972 * pow(1.0 - max(dot(H_uw, V), 0.0), 5.0);
+      float coatGlint = pow(ndh_uw, 84.0) * 0.26 * (1.0 - barnacleMask) * (1.0 - sloughPatch * 0.6);
+      float rimSheen = pow(1.0 - ndv, 3.8) * 0.14 * (1.0 - barnacleMask);
+      float specUW = (D_ggx * fresnelUW * specStr + coatGlint + rimSheen) * sh;
 
-      // Cetacean Dermal & Fluke-Edge Subsurface Scattering (SSS)
-      float backLight = pow(clamp(dot(-V, uSunDir + N * 0.42), 0.0, 1.0), 2.8);
-      float terminatorSSS = smoothstep(-0.22, 0.15, dot(N, uSunDir)) * (1.0 - smoothstep(0.15, 0.52, dot(N, uSunDir)));
+      // Cetacean Dermal & Thin Fluke-Edge Subsurface Scattering (SSS)
+      float backLight = pow(clamp(dot(-V, uSunDir + N * 0.40), 0.0, 1.0), 2.6);
+      float terminatorSSS = smoothstep(-0.22, 0.14, dot(N, uSunDir)) * (1.0 - smoothstep(0.14, 0.50, dot(N, uSunDir)));
       vec3 sssUW = sunIrr * (
-        vec3(0.24, 0.42, 0.45) * backLight * (0.20 + 0.65 * finEdgeMask) * 0.42 +
-        vec3(0.20, 0.11, 0.10) * terminatorSSS * 0.16
-      ) * (0.35 + 0.65 * sh);
+        vec3(0.22, 0.44, 0.48) * backLight * (0.18 + 0.72 * finEdgeW) * 0.46 +
+        vec3(0.22, 0.10, 0.09) * terminatorSSS * 0.18
+      ) * (0.35 + 0.65 * sh) * hideOnly;
 
-      vec3 uwRawLit = skinCol * (directUW + ambientUW) + sunIrr * (0.22 + ca * 0.65) * specUW + sssUW;
+      vec3 uwRawLit = skinCol * (directUW + ambientUW) + sunIrr * (0.28 + ca * 0.78) * specUW + sssUW;
 
       // ---- 2. Above-Water Sunny Daytime Lighting & Glistening Wet Seawater Film ----
       float airNdl = max(dot(N, uAirSunDir), 0.0);
       vec3 airSunCol = vec3(1.26, 1.18, 1.00);
       vec3 skyHemi = mix(vec3(0.18, 0.30, 0.42), vec3(0.48, 0.70, 0.96), clamp(N.y * 0.5 + 0.5, 0.0, 1.0));
       vec3 H_air = normalize(V + uAirSunDir);
-      float wetSpecPow = mix(72.0, 180.0, eyeMask);
-      float wetSpecStr = mix(0.75, 1.25, eyeMask);
+      float wetSpecPow = mix(82.0, 220.0, eyeMask);
+      float wetSpecStr = mix(0.88, 1.45, eyeMask) * (1.0 - barnacleMask * 0.7);
       float specAir = pow(max(dot(N, H_air), 0.0), wetSpecPow) * wetSpecStr;
-      float skyFres = pow(1.0 - ndv, 3.2) * 0.42;
+      float skyFres = pow(1.0 - ndv, 3.0) * 0.46 * (1.0 - barnacleMask * 0.6);
       vec3 airBase = skinCol * (airSunCol * airNdl * 0.98 + skyHemi * 0.58)
         + airSunCol * specAir
         + vec3(0.48, 0.72, 0.96) * skyFres;
@@ -1621,6 +2099,7 @@ function createWhaleMaterial(sharedUniforms, whaleUniforms) {
   bindSharedUniforms(mat, sharedUniforms);
   mat.uniforms.uWhaleState = whaleUniforms.uWhaleState;
   mat.uniforms.uWhaleLook = whaleUniforms.uWhaleLook;
+  mat.uniforms.uWhaleAge = whaleUniforms.uWhaleAge;
   return mat;
 }
 
@@ -1837,19 +2316,27 @@ function buildWhaleSpoutAndBubbles(sharedUniforms, maxParticles = 960) {
       float tNorm = vMeta.w;
 
       if (pType < 0.5) {
-        // Feathered sunlit whale blowhole mist / sea spray puff
+        // Turbulent wispy wind-sheared whale blowhole sea-spray plume (no cotton-ball circles!)
         float ang = atan(vQuad.y, vQuad.x);
-        float wisp = 0.80 + 0.20 * sin(ang * 4.0 + seed + tNorm * 3.0) * cos(ang * 3.0 - seed * 0.7);
-        float soft = pow(max(0.0, 1.0 - r / wisp), 1.65);
-        float core = exp(-r * r * 3.2);
+        vec2 qRot = vec2(
+          vQuad.x * cos(seed) - vQuad.y * sin(seed),
+          vQuad.x * sin(seed) + vQuad.y * cos(seed)
+        );
+        float w1 = sin(qRot.x * 5.2 + seed + tNorm * 2.5) * cos(qRot.y * 4.8 - seed * 1.3);
+        float w2 = sin((qRot.x + qRot.y) * 9.5 - seed * 2.1 + tNorm * 4.0);
+        float w3 = cos(ang * 5.0 + seed * 1.7) * 0.18 + sin(ang * 3.0 - seed) * 0.14;
+        float turb = 0.58 + 0.24 * w1 + 0.18 * w2;
+        float rDistort = r / max(0.35, 0.86 + w3 + w1 * 0.16);
+        float soft = pow(max(0.0, 1.0 - rDistort), 2.15) * clamp(turb * 1.35, 0.18, 1.0);
+        float fineSpray = smoothstep(0.62, 0.92, 0.5 + 0.5 * sin(qRot.x * 22.0 + seed) * cos(qRot.y * 24.0 - seed)) * (1.0 - r);
         vec3 V = normalize(vWPos - uCamPos);
         float fwdSun = pow(max(dot(V, uAirSunDir), 0.0), 4.0);
-        vec3 mistCol = mix(vec3(0.76, 0.89, 0.97), vec3(1.02, 0.99, 0.94), 0.55 + 0.45 * fwdSun + 0.2 * core);
+        vec3 mistCol = mix(vec3(0.76, 0.89, 0.97), vec3(1.02, 0.99, 0.94), 0.55 + 0.45 * fwdSun + 0.2 * fineSpray);
         float subCull = smoothstep(uWaveHeight - 0.18, uWaveHeight + 0.12, vWPos.y);
-        float a = (soft * 0.42 + core * 0.18) * alphaLife * (0.35 + 0.65 * subCull);
+        float a = (soft * 0.34 + fineSpray * 0.16) * alphaLife * (0.35 + 0.65 * subCull);
         if (a < 0.01) discard;
         vec3 finalMist = uCamPos.y < uWaveHeight - 0.02 ? fog(mistCol, vWPos) : mistCol;
-        fragColor = vec4(finalMist, clamp(a, 0.0, 0.72));
+        fragColor = vec4(finalMist, clamp(a, 0.0, 0.52));
       } else {
         // Glistening underwater vortex bubble
         float rim = smoothstep(0.42, 0.84, r) * (1.0 - smoothstep(0.86, 1.0, r));
@@ -2400,10 +2887,12 @@ export function createWhalePodRig(terrain, sharedUniforms) {
   const motherUniforms = {
     uWhaleState: { value: new THREE.Vector4(0, 0, 0, 1.0) },
     uWhaleLook: { value: new THREE.Vector2(0, 0) },
+    uWhaleAge: { value: 1.0 },
   };
   const calfUniforms = {
     uWhaleState: { value: new THREE.Vector4(0, 0, 0, 1.0) },
     uWhaleLook: { value: new THREE.Vector2(0, 0) },
+    uWhaleAge: { value: 0.28 },
   };
 
   const motherMat = createWhaleMaterial(sharedUniforms, motherUniforms);
@@ -2447,8 +2936,11 @@ export function createWhalePodRig(terrain, sharedUniforms) {
 
 export function createSharkRig(terrain, sharedUniforms) {
   const sharkGeo = buildAnatomicalSharkGeometry();
-  const sharkMat = createSharkMaterial(sharedUniforms);
-  const sharkShadowMat = createSharkShadowMaterial(sharedUniforms);
+  const sharkUniforms = {
+    uSharkLook: { value: new THREE.Vector2(0, 0) },
+  };
+  const sharkMat = createSharkMaterial(sharedUniforms, sharkUniforms);
+  const sharkShadowMat = createSharkShadowMaterial(sharedUniforms, sharkUniforms);
 
   const sharkMesh = new THREE.Mesh(sharkGeo, sharkMat);
   sharkMesh.frustumCulled = false;
@@ -2456,7 +2948,7 @@ export function createSharkRig(terrain, sharedUniforms) {
   const sharkShadowMesh = new THREE.Mesh(sharkGeo, sharkShadowMat);
   sharkShadowMesh.frustumCulled = false;
 
-  const controller = new SharkController(sharkMesh, sharkShadowMesh, terrain, sharedUniforms);
+  const controller = new SharkController(sharkMesh, sharkShadowMesh, sharkUniforms, terrain, sharedUniforms);
 
   return {
     sharkMesh,

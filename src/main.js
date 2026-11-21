@@ -1370,7 +1370,7 @@ function animate() {
   // 1. Step wave spectra, interactive 2D wave heightfield, differential-area chromatic caustics, shark & whale pod
   oceanSystem.update(elapsed, dt);
   waterCaustics.update(elapsed);
-  sharkRig.controller.update(dt);
+  sharkRig.controller.update(dt, camera.position);
   whalePod.controller.update(dt, camera.position);
   waterHeightfield.update(dt, camera.position, whalePod);
   deformableSand.update(dt, elapsed, camera.position, terrain, sharkRig, whalePod);
